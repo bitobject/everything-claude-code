@@ -1,0 +1,24 @@
+{
+  "name": "ecc",
+  "version": "2.0.0-go-nextjs",
+  "description": "everything-claude-code adapted for a Go backend (strict Clean Architecture, modules with layers inside, pgx/sqlc/goose/River, OpenAPI contract-first with oapi-codegen) and a Next.js 16 App Router frontend built for SEO. Agents, skills, commands, rules and hooks.",
+  "author": {
+    "name": "Affaan Mustafa (original); Go/Next.js adaptation"
+  },
+  "homepage": "https://github.com/affaan-m/everything-claude-code",
+  "repository": "https://github.com/WorldFlowAI/everything-claude-code",
+  "license": "MIT",
+  "keywords": [
+    "go",
+    "golang",
+    "clean-architecture",
+    "openapi",
+    "nextjs",
+    "seo",
+    "tdd",
+    "code-review",
+    "security"
+  ],
+  "commands": "./commands",
+  "skills": "./skills"
+}

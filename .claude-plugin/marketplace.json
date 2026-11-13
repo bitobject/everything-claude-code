@@ -1,0 +1,19 @@
+{
+  "name": "ecc-local",
+  "owner": {
+    "name": "local"
+  },
+  "metadata": {
+    "description": "Local marketplace for the Go + Next.js adaptation of everything-claude-code"
+  },
+  "plugins": [
+    {
+      "name": "ecc",
+      "source": "./",
+      "description": "Go (strict Clean Architecture) + Next.js (SEO) + OpenAPI contract-first: agents, skills, commands, rules and hooks",
+      "license": "MIT",
+      "category": "workflow",
+      "keywords": ["go", "clean-architecture", "openapi", "nextjs", "seo", "tdd", "code-review"]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Pinned tool binaries, installed by `make tools` from tools/tools.lock.
+/backend/bin/

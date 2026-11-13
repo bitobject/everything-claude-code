@@ -1,0 +1,99 @@
+# vacuum ruleset for api/openapi.yaml (make api-lint; pinned binary, see tools/tools.lock).
+# Errors fail make check; warnings are advice. Changing this file changes a check.
+extends: [[vacuum:oas, recommended]]
+rules:
+  # Advice we don't follow on purpose.
+  oas3-missing-example: off      # examples where they help a reader, not on every schema
+  oas3-api-servers: off          # the API is served from more than one host (proxy, tests)
+
+  # The rules of skills/openapi-contract-first, as errors.
+  operation-operationId: error
+  operation-tags: error
+  operation-tag-defined: error
+
+  problem-default-response:
+    description: 'Every operation declares a `default` problem response.'
+    severity: error
+    given: $.paths[*][get,put,post,patch,delete]
+    then:
+      field: responses.default
+      function: truthy
+
+  problem-codes-declared:
+    description: 'Every operation lists its error codes by status in `x-problem-codes`.'
+    severity: error
+    given: $.paths[*][get,put,post,patch,delete]
+    then:
+      field: x-problem-codes
+      function: truthy
+
+  security-by-default:
+    description: 'Security is declared globally; a public operation says `security: []`.'
+    severity: error
+    given: $
+    then:
+      field: security
+      function: truthy
+
+  request-strings-bounded:
+    description: 'A string in a request body has a maxLength, a pattern, an enum, a const or a format.'
+    severity: error
+    given: $.paths[*][post,put,patch].requestBody.content[*].schema..properties[?(@.type == 'string')]
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          anyOf:
+            - required: [maxLength]
+            - required: [pattern]
+            - required: [enum]
+            - required: [const]
+            - required: [format]
+
+  no-personal-data-in-parameters:
+    description: 'Personal data never goes in a path, query or header parameter (URLs end up in logs).'
+    severity: error
+    given: $..parameters[*].name
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: "(?i)(phone|e-?mail|passport|snils|birth|address|full_?name)"
+
+  properties-camel-case:
+    description: 'JSON properties are camelCase.'
+    severity: error
+    given: $..properties
+    then:
+      field: "@key"
+      function: casing
+      functionOptions:
+        type: camel
+
+  # The subset of OpenAPI 3.1 that oapi-codegen (initial 3.1 support, v2.8) and the TypeScript
+  # generator both handle.
+  no-prefix-items:
+    description: 'No prefixItems (tuples); use an object.'
+    severity: error
+    given: $..prefixItems
+    then:
+      function: falsy
+  no-conditional-schemas:
+    description: 'No if/then/else; use oneOf with a discriminator.'
+    severity: error
+    given: $..[?(@.if || @.then || @.else)]
+    then:
+      function: falsy
+  no-dependent-schemas:
+    description: 'No dependentSchemas or dependentRequired.'
+    severity: error
+    given: $..[?(@.dependentSchemas || @.dependentRequired)]
+    then:
+      function: falsy
+  no-closed-allof-members:
+    description: >-
+      additionalProperties false inside allOf rejects the sibling schemas' properties (JSON Schema
+      2020-12); close the composed schema with unevaluatedProperties false instead.
+    severity: error
+    given: $..allOf[*].additionalProperties
+    then:
+      function: truthy

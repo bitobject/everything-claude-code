@@ -1,0 +1,33 @@
+version: "2"
+# One entry per module: its queries, generated into its own package. Every entry reads all
+# migrations (every schema); internal/archtest makes sure a module's queries name only its own
+# schema. sqlc 1.31 parses PostgreSQL 17 syntax: keep PostgreSQL 18-only syntax out of the files
+# it reads (virtual generated columns, NOT ENFORCED, WITHOUT OVERLAPS, RETURNING old/new); make
+# generated columns STORED.
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: internal/leads/repository/postgres/queries
+    gen:
+      go: &go
+        package: sqlcgen
+        out: internal/leads/repository/postgres/sqlcgen
+        sql_package: pgx/v5
+        omit_unused_structs: true
+        overrides:
+          - db_type: uuid
+            go_type:
+              import: uuid
+              type: UUID
+          - db_type: timestamptz
+            go_type:
+              import: time
+              type: Time
+  # A thin module keeps its generated code next to its single package.
+  - engine: postgresql
+    schema: migrations
+    queries: internal/notifications/queries
+    gen:
+      go:
+        <<: *go
+        out: internal/notifications/sqlcgen

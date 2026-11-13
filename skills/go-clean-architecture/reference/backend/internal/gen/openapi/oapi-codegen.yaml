@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+package: openapi
+output: openapi.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+  embedded-spec: true
+compatibility:
+  always-prefix-enum-values: true
+  # Per-operation middlewares run in the order they are listed (the default is last-to-first).
+  apply-chi-middleware-first-to-last: true
+output-options:
+  # Map format: uuid to the standard library type (Go 1.27) instead of github.com/google/uuid,
+  # keeping Go-specific details out of the contract.
+  type-mapping:
+    string:
+      formats:
+        uuid:
+          type: uuid.UUID
+          import: uuid

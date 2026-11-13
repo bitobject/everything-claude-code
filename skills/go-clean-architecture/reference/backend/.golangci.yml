@@ -1,0 +1,144 @@
+# golangci-lint v2 configuration (verified with v2.15.0: 0 issues on this module). Copy to backend/.golangci.yml.
+# Loosening a rule is a decision: add a //nolint:<linter> // <reason> at the line instead.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose       # HTTP response bodies are closed
+    - depguard        # imports banned everywhere, and the standard packages inner layers may not use
+    - errorlint       # errors.Is/As instead of == and type switches on wrapped errors
+    - exhaustive      # switch over enums handles every case
+    - forbidigo       # forbidden calls, see settings
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr          # returning nil when err != nil
+    - noctx           # HTTP requests and DB calls without a context
+    - nolintlint      # //nolint must name the linter and give a reason
+    - revive
+    - sloglint        # consistent slog calls, the context passed, no personal-data keys
+    - unconvert
+    - unparam
+    - usestdlibvars   # http.MethodGet, http.StatusOK
+    - usetesting      # t.Context(), t.TempDir(), t.Setenv() in tests
+    - wastedassign
+    # Not enabled, on purpose: contextcheck (noisy), rowserrcheck and sqlclosecheck (nothing to
+    # find with pgx + sqlc), copyloopvar and intrange (go fix does that), perfsprint (taste).
+  settings:
+    depguard:
+      rules:
+        everywhere:
+          list-mode: lax
+          deny:
+            - pkg: github.com/google/uuid
+              desc: use the standard library uuid package (Go 1.27)
+            - pkg: github.com/pkg/errors
+              desc: use errors and fmt.Errorf with %w
+            - pkg: golang.org/x/exp/slices
+              desc: use slices
+            - pkg: golang.org/x/exp/maps
+              desc: use maps
+            - pkg: math/rand$
+              desc: use math/rand/v2, or crypto/rand for anything secret
+            - pkg: io/ioutil
+              desc: use io and os
+        inner-layers:
+          # go-arch-lint allows any standard package; these stay out of entity and usecase.
+          files:
+            - "**/internal/*/entity/**"
+            - "**/internal/*/usecase/**"
+          list-mode: lax
+          deny:
+            - pkg: net$
+              desc: inner layers do no I/O; declare a port
+            - pkg: net/http
+              desc: inner layers don't know the transport; the delivery adapter does
+            - pkg: net/rpc
+              desc: inner layers do no I/O; declare a port
+            - pkg: net/smtp
+              desc: inner layers do no I/O; declare a port
+            - pkg: database
+              desc: inner layers don't know storage; the repository adapter does
+            - pkg: os
+              desc: inner layers get configuration as values and do no I/O
+            - pkg: log$
+              desc: use the injected *slog.Logger, at the edge
+    errcheck:
+      check-type-assertions: true
+    exhaustive:
+      default-signifies-exhaustive: false # a new enum value must be handled everywhere
+    forbidigo:
+      forbid:
+        - pattern: ^(fmt\.Print.*|print|println)$
+          msg: use the injected *slog.Logger
+        - pattern: ^log\.(Print|Fatal|Panic).*$
+          msg: use the injected *slog.Logger; exit only from main
+        - pattern: ^time\.Now$
+          msg: inner layers take time from the Clock port
+        - pattern: ^context\.(Background|TODO)$
+          msg: take ctx from the caller (allowed in cmd/ and tests)
+    govet:
+      enable:
+        - nilness
+    gosec:
+      excludes:
+        - G104 # duplicate of errcheck
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      enable-default-rules: true # the rules below are added to revive's defaults, not instead of them
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: receiver-naming
+        - name: unexported-return
+        - name: var-naming
+    sloglint:
+      no-mixed-args: true
+      kv-only: true
+      context: scope        # with a ctx in scope, call the ...Context method
+      static-msg: true
+      key-naming-case: snake
+      forbidden-keys:       # personal data and secrets never become log keys
+        - phone
+        - email
+        - name
+        - address
+        - password
+        - token
+        - secret
+        - dsn
+        - body
+  exclusions:
+    generated: strict # skips files with the standard "Code generated ... DO NOT EDIT." header
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [forbidigo, gosec, errcheck, unparam]
+      - path: ^cmd/
+        linters: [forbidigo]
+        text: context\.(Background|TODO)
+      # time.Now is banned only where the Clock port must be used.
+      - path-except: ^internal/[^/]+/(entity|usecase)/
+        linters: [forbidigo]
+        text: time\.Now
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - example.com/app # replace with your module path

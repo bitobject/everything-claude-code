@@ -1,0 +1,267 @@
+openapi: 3.1.0
+info:
+  title: Reference API
+  version: 0.2.0
+  description: |
+    Minimal contract for the go-clean-architecture reference module.
+
+    Errors are RFC 9457 problem documents (`application/problem+json`). Clients branch on `code`
+    (or on `type`, which is `https://example.com/problems/<code>`), never on `title` or `detail`.
+    Each operation lists the codes it can return in `x-problem-codes`, by status. The list can grow:
+    treat an unknown code like its status. A non-2xx response from a proxy (502, 504) may not be a
+    problem document at all.
+tags:
+  - name: leads
+    description: Capturing and assigning leads (module `leads`).
+security:
+  - session: []
+paths:
+  /v1/leads:
+    post:
+      operationId: createLead
+      tags: [leads]
+      summary: Capture a lead
+      description: |
+        Public: the lead forms call it. Idempotent by `Idempotency-Key`: repeating a request with the
+        same key and the same body within 24 hours returns the lead the first request created (201,
+        same body) instead of creating another one.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        description: What the visitor entered, normalized by the form (phone in E.164).
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLeadRequest"
+      responses:
+        "201":
+          description: Created, or the earlier lead for a repeated `Idempotency-Key`.
+          headers:
+            Location:
+              description: Path of the lead, `/v1/leads/{leadId}`.
+              required: true
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "415":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RetryableProblem"
+        default:
+          $ref: "#/components/responses/Problem"
+      x-problem-codes:
+        "400": [request.invalid]
+        "413": [request.too_large]
+        "415": [request.unsupported_media_type]
+        "422": [lead.invalid_phone, lead.invalid_topic, lead.invalid_city, idempotency.key_reused]
+        "429": [lead.rate_limited]
+        "500": [internal]
+        "503": [unavailable, timeout]
+  /v1/leads/{leadId}:
+    get:
+      operationId: getLead
+      tags: [leads]
+      summary: Get a lead
+      parameters:
+        - $ref: "#/components/parameters/LeadId"
+      responses:
+        "200":
+          description: The lead.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+      x-problem-codes:
+        "400": [request.invalid]
+        "401": [auth.required]
+        "404": [lead.not_found]
+        "500": [internal]
+        "503": [unavailable, timeout]
+  /v1/leads/{leadId}/assign:
+    post:
+      operationId: assignLead
+      tags: [leads]
+      summary: Assign a new lead to a lawyer
+      parameters:
+        - $ref: "#/components/parameters/LeadId"
+      responses:
+        "200":
+          description: The lead, now assigned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+      x-problem-codes:
+        "400": [request.invalid]
+        "401": [auth.required]
+        "404": [lead.not_found]
+        "409": [lead.not_assignable]
+        "500": [internal]
+        "503": [unavailable, timeout]
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: __Host-session
+      description: Opaque server-side session (HttpOnly, Secure, SameSite=Lax), issued at login.
+  parameters:
+    LeadId:
+      name: leadId
+      in: path
+      required: true
+      description: ID of the lead (a UUID).
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        A Structured Field String (draft-ietf-httpapi-idempotency-key-header-08), so the value is
+        quoted: `"6f1c0e5a-8d0b-4a49-9b8e-6f2d1c3a4b5c"`. A new random key per form, kept for its
+        retries. Keys expire after 24 hours. The same key with a different body gets 422
+        `idempotency.key_reused`.
+      schema:
+        type: string
+        pattern: '^"[A-Za-z0-9_-]{16,64}"$'
+        examples: ['"6f1c0e5a-8d0b-4a49-9b8e-6f2d1c3a4b5c"']
+  responses:
+    Problem:
+      description: Error in RFC 9457 format
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RetryableProblem:
+      description: Error in RFC 9457 format; retry after the given number of seconds
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    CreateLeadRequest:
+      type: object
+      description: |
+        What a lead form submits. Closed (`additionalProperties: false`): an unknown field is a 400,
+        so a new field ships in the backend before any form sends it.
+      additionalProperties: false
+      required: [phone, topic, city]
+      properties:
+        phone:
+          type: string
+          description: Russian mobile number in E.164, `+7` and 10 digits; the form normalizes `8 (999) ...`.
+          pattern: '^\+7[0-9]{10}$'
+          examples: ["+79991234567"]
+        topic:
+          type: string
+          minLength: 3
+          maxLength: 200
+        city:
+          type: string
+          minLength: 2
+          maxLength: 100
+    LeadStatus:
+      type: string
+      description: Where the lead is in its lifecycle, `new` -> `assigned` -> `closed`.
+      enum: [new, assigned, closed]
+    Lead:
+      type: object
+      description: A lead as other parties see it. The phone number is personal data and is not returned.
+      required: [id, topic, city, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        topic:
+          type: string
+        city:
+          type: string
+        status:
+          $ref: "#/components/schemas/LeadStatus"
+        createdAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      description: RFC 9457 problem details, with the extension members `code`, `requestId` and `errors`.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Identifies the problem type, `https://example.com/problems/<code>`
+        title:
+          type: string
+          description: Short summary of the problem type; the same for every occurrence
+        status:
+          type: integer
+          description: The HTTP status code of the response
+        detail:
+          type: string
+          description: Explanation of this occurrence, safe to show; never contains submitted values
+        code:
+          type: string
+          description: Stable machine-readable code, e.g. lead.not_found
+        requestId:
+          type: string
+          description: The request ID, also in the server logs
+        errors:
+          type: array
+          description: Which parts of the request were wrong (400 only). Never contains submitted values.
+          items:
+            $ref: "#/components/schemas/FieldError"
+    FieldError:
+      type: object
+      description: |
+        One failed rule: `pointer` names a place in the request body (`#` is the body as a whole),
+        `parameter` a path, query or header parameter.
+      required: [code]
+      properties:
+        pointer:
+          type: string
+          description: JSON Pointer (RFC 6901) into the request body, as a URI fragment, e.g. `#/phone`
+        parameter:
+          type: string
+          description: Name of the path, query or header parameter, e.g. `Idempotency-Key`
+        code:
+          type: string
+          description: The rule that failed, e.g. `required`, `pattern`, `maxLength`, `additionalProperties`

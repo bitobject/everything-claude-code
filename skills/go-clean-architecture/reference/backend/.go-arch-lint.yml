@@ -1,0 +1,139 @@
+# Enforces the dependency rule from STACK.md. Run: bin/go-arch-lint check (pinned binary, see
+# tools/tools.lock). go-arch-lint checks imports between project packages and vendors; it always
+# allows the standard library, so depguard (.golangci.yml) checks which standard packages the
+# inner layers may use, and internal/archtest checks struct tags, Restore* calls and SQL schemas.
+#
+# Modules and how they depend on each other (no cycles; a module reaches another only through
+# that module's contract package):
+#   leads          full   ← notifications (worker reads leads through leads/contract)
+#   notifications  thin
+# A new full module copies the leads block (nine components); a thin one copies the
+# notifications block (two). Then add the module to the graph above.
+# A component that spans several packages (in: dir/** or dir/*) lists itself in mayDependOn when
+# its packages import each other: go-arch-lint allows only the listed components and kernel.
+version: 3
+workdir: .
+
+allow:
+  depOnAnyVendor: false
+  ignoreNotFoundComponents: true # components declared before their directories exist (gateway/)
+
+excludeFiles:
+  - "^.*_test\\.go$"
+
+vendors:
+  pgx:
+    in:
+      - github.com/jackc/pgx/v5
+      - github.com/jackc/pgx/v5/**
+  river:
+    in:
+      - github.com/riverqueue/river
+      - github.com/riverqueue/river/**
+  oapi:
+    in:
+      - github.com/oapi-codegen/runtime
+      - github.com/oapi-codegen/runtime/**
+      - github.com/getkin/kin-openapi/**
+  oapi-validator:
+    in:
+      - github.com/oapi-codegen/nethttp-middleware
+
+components:
+  kernel:
+    in: internal/kernel/**
+  platform:
+    in: internal/platform/* # one level: platform/postgres/pgtest is test support, below
+  openapi:
+    in: internal/gen/openapi
+  api:
+    in: internal/api
+  migrations:
+    in: migrations
+  main:
+    in: cmd/**
+
+  # Test support: imported only by _test.go files (which go-arch-lint skips), so no component may
+  # depend on these; production code that imports a fake or a test database fails the check.
+  platform-pgtest:
+    in: internal/platform/postgres/pgtest
+  api-test:
+    in: internal/api/apitest
+
+  # --- module: leads (full profile) -------------------------------------------
+  leads-contract:
+    in: internal/leads/contract
+  leads-entity:
+    in: internal/leads/entity
+  leads-usecase:
+    in: internal/leads/usecase
+  leads-usecasetest: # fakes and the store contract suite (test support)
+    in: internal/leads/usecase/usecasetest
+  leads-repository:
+    in: internal/leads/repository/*
+  leads-sqlcgen:
+    in: internal/leads/repository/*/sqlcgen
+  leads-delivery:
+    in: internal/leads/delivery/**
+  leads-worker: # River jobs of the module (more specific than leads-delivery, so it wins)
+    in: internal/leads/delivery/worker
+  leads-gateway:
+    in: internal/leads/gateway/**
+
+  # --- module: notifications (thin profile) -----------------------------------
+  notifications:
+    in: internal/notifications
+  notifications-sqlcgen:
+    in: internal/notifications/sqlcgen
+
+commonComponents:
+  - kernel
+
+deps:
+  main:
+    anyProjectDeps: true
+    anyVendorDeps: true
+  platform:
+    mayDependOn: [platform] # its packages use each other (httpserver -> logging)
+    anyVendorDeps: true
+  platform-pgtest:
+    mayDependOn: [platform]
+    canUse: [pgx]
+  openapi:
+    canUse: [oapi]
+  api:
+    mayDependOn: [openapi, platform]
+    canUse: [oapi, oapi-validator]
+  api-test:
+    mayDependOn: [api, openapi, platform]
+    canUse: [oapi]
+
+  leads-contract: # the module's public API: stdlib + the shared kernel only
+    mayDependOn: [kernel]
+  leads-entity: # stdlib + the shared kernel only
+    mayDependOn: [kernel]
+  leads-usecase:
+    mayDependOn: [leads-entity, leads-contract]
+  leads-usecasetest:
+    mayDependOn: [leads-usecase, leads-entity, leads-contract]
+  leads-repository:
+    mayDependOn: [leads-usecase, leads-entity, leads-sqlcgen, platform]
+    canUse: [pgx]
+  leads-sqlcgen:
+    canUse: [pgx]
+  leads-delivery:
+    mayDependOn: [leads-usecase, leads-entity, leads-contract, openapi, platform]
+    canUse: [oapi]
+  leads-worker:
+    mayDependOn: [leads-usecase, platform]
+    canUse: [river]
+  leads-gateway:
+    # e.g. [leads-usecase, lawyers-contract] once leads calls lawyers: another module only
+    # through its contract package
+    mayDependOn: [leads-usecase]
+
+  notifications:
+    mayDependOn: [notifications-sqlcgen, leads-contract, platform]
+    canUse: [pgx, river]
+  notifications-sqlcgen:
+    canUse: [pgx]

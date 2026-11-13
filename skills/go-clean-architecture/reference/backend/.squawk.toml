@@ -1,0 +1,16 @@
+# squawk lints every migration in make check (make migrations-lint, run from backend/).
+# Changing this file changes a check.
+pg_version = "18.0"
+
+# goose runs each migration in a transaction, unless the file says `-- +goose NO TRANSACTION`;
+# such a file (CREATE INDEX CONCURRENTLY) also says `-- squawk-disable-assume-in-transaction`.
+# A deliberate drop, such as one in a Down section, carries `-- squawk-ignore <rule>` on the line before it.
+assume_in_transaction = true
+
+# `api migrate` (platform/postgres.Migrate) sets lock_timeout = 5s and no statement timeout for
+# its session, so the files don't repeat them.
+excluded_rules = ["require-lock-timeout", "require-statement-timeout"]
+
+# River's migrations (NNNNN_river_VVV.sql) are River's SQL as published, copied unchanged. Our
+# own files about River (the schema, its privileges) are linted.
+excluded_paths = ["*_river_0*.sql"]

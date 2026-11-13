@@ -1,0 +1,17 @@
+# Pinned tools, installed into backend/bin by `make tools`; `make check` fails when an installed
+# version differs. One tool per line: name version os-arch sha256 (of the release download: the
+# archive, or the binary when the release is a bare binary). Take the SHA-256 from the publisher's
+# checksums file or the GitHub release asset digest and check it against your own download.
+# Policy: the newest release that is at least 14 days old; earlier only for a security fix.
+# Changing this file changes a check. Another platform needs lines of its own.
+#
+# goose is the CLI only, for `make migration name=...` and `make migrations-fix`; migrations run
+# through the goose library in go.mod (api migrate), whose version may differ. vacuum lints
+# api/openapi.yaml, oasdiff compares it with main for breaking changes.
+golangci-lint 2.15.0 linux-amd64 9b7fe6a6bf6334b98decf8d86b11415ea7889afdabdd1959fdce23af2a9ebcea
+sqlc 1.31.1 linux-amd64 497ae4fcdfa64c5b0c311ffe4c2bd991e43991e82e5367792ed78bc2dca27354
+go-arch-lint 1.19.1 linux-amd64 26730d19b6acd20f3e922f71f5a7ec1c4e873894666fa9ad7bf03496ac17b06e
+goose 3.29.0 linux-amd64 cc56e2f75532a4dd52f5ef2d31db0121e91079a9c2617bc0ad4e04e2d41c228b
+squawk 2.71.0 linux-amd64 ab978cb412e5e5eb2f06aaa4c5035a1567f6eba53274d7d1e068f73169b88bbd
+vacuum 0.36.0 linux-amd64 58324dfc3322bc431f394ef7822586d17b269169ab3297cb29be6847d5519a1e
+oasdiff 1.35.0 linux-amd64 a8023002fcb2eaa7f5758148a9303cb63d33b939886df312268bc0fc7b939140
