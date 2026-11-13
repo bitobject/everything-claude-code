@@ -204,7 +204,7 @@ openapi-react-query; in maintenance mode since 2026-09-19, the replacement is an
   Components and Server Actions; imports `server-only`; sends a deadline and a request ID; forwards
   only the session cookie, taken from the raw `Cookie` header (`(await headers()).get('cookie')`),
   never `(await cookies()).toString()`, which re-encodes values.
-- `web/src/lib/api/browser.ts`: same-origin client with the `/api` prefix for the cabinet; the
+- `web/src/lib/api/browser.ts`: same-origin client with the `/api` prefix for the cabinets; the
   reverse proxy forwards `/api/*` to Go, so the HttpOnly cookie and `http.CrossOriginProtection`
   work without CORS.
 - Error bodies are read with `asProblem()` (`lib/api/problem.ts`, `nextjs-patterns`): a proxy's

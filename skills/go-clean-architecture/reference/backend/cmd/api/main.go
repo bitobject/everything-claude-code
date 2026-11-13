@@ -9,15 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/caarlos0/env/v11"
-	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"example.com/app/internal/notifications"
 	"example.com/app/internal/platform/config"
@@ -25,6 +23,7 @@ import (
 	"example.com/app/internal/platform/httpserver"
 	"example.com/app/internal/platform/logging"
 	"example.com/app/internal/platform/postgres"
+	"example.com/app/internal/platform/telemetry"
 	"example.com/app/migrations"
 )
 
@@ -35,9 +34,12 @@ type cfg struct {
 	DatabaseURL    config.Secret `env:"DATABASE_URL,unset"`         // the application role (serve)
 	MigrateURL     config.Secret `env:"MIGRATE_DATABASE_URL,unset"` // the schema owner (migrate)
 	HandlerTimeout time.Duration `env:"HTTP_HANDLER_TIMEOUT" envDefault:"10s"`
-	DrainDelay     time.Duration `env:"SHUTDOWN_DRAIN_DELAY" envDefault:"5s"`
-	Grace          time.Duration `env:"SHUTDOWN_GRACE" envDefault:"15s"`
-	LogLevel       slog.Level    `env:"LOG_LEVEL" envDefault:"INFO"`
+	// The proxies (nginx, the Next.js servers) whose X-Forwarded-For is believed, e.g.
+	// 10.0.0.0/8; see httpserver.ClientIP. Empty: the direct peer is the client.
+	TrustedProxies []netip.Prefix `env:"TRUSTED_PROXIES" envSeparator:","`
+	DrainDelay     time.Duration  `env:"SHUTDOWN_DRAIN_DELAY" envDefault:"5s"`
+	Grace          time.Duration  `env:"SHUTDOWN_GRACE" envDefault:"15s"`
+	LogLevel       slog.Level     `env:"LOG_LEVEL" envDefault:"INFO"`
 }
 
 func main() {
@@ -81,16 +83,22 @@ func subcommand(args []string) string {
 }
 
 func serve(ctx context.Context, log *slog.Logger, c cfg) error {
+	// First: the pool's tracer and the HTTP instrumentation bind to the providers it installs.
+	shutdownTelemetry, err := telemetry.Setup(ctx, "api", log)
+	if err != nil {
+		return err
+	}
+	defer telemetry.Flush(ctx, log, shutdownTelemetry) // runs last: after the server and the pool stop
+
 	pool, err := postgres.Open(ctx, c.DatabaseURL.Reveal(), postgres.DefaultConfig("api"))
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	// Insert-only River client: no queues, never started. The worker process works the jobs.
-	jobsClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: "river", Logger: log})
+	jobsClient, err := newJobsClient(pool, log)
 	if err != nil {
-		return fmt.Errorf("river client: %w", err)
+		return err
 	}
 	bus := events.NewBus(jobsClient)
 	notifications.Subscribe(bus) // every subscriber module, in every process that publishes
@@ -101,20 +109,8 @@ func serve(ctx context.Context, log *slog.Logger, c cfg) error {
 	}
 
 	health := httpserver.NewHealth(pool.Ping)
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /livez", health.Live) // probes skip the middleware: no access log lines
-	mux.HandleFunc("GET /readyz", health.Ready)
-	mux.Handle("/v1/", httpserver.Chain(v1,
-		httpserver.RequestID,      // first, so every log line of the request has the ID
-		httpserver.AccessLog(log), // one line per request, with the final status
-		httpserver.Recover(log),   // a panic becomes a logged 500
-		httpserver.Timeout(c.HandlerTimeout),
-		httpserver.LimitBody,
-		http.NewCrossOriginProtection().Handler, // cookie-authenticated mutations from other sites
-	))
-
 	log.InfoContext(ctx, "listening", "addr", c.Addr)
-	err = httpserver.Run(ctx, httpserver.New(c.Addr, mux, log), httpserver.Shutdown{
+	err = httpserver.Run(ctx, httpserver.New(c.Addr, newHandler(log, v1, health, c), log), httpserver.Shutdown{
 		Health: health, DrainDelay: c.DrainDelay, Grace: c.Grace,
 	})
 	if errors.Is(err, context.Canceled) {

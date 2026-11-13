@@ -116,7 +116,7 @@ export default defineConfig([
       'boundaries/files': [
         { category: 'server-entry', pattern: 'src/features/*/{data,actions}.ts' },
         { category: 'api-server', pattern: 'src/lib/api/server.ts' },
-        { category: 'proxy', pattern: 'src/proxy.ts' },
+        { category: 'root', pattern: 'src/{proxy,instrumentation}.ts' },
       ],
     },
     rules: {
@@ -136,7 +136,7 @@ export default defineConfig([
             { from: { element: { type: 'components' } }, allow: { to: { element: { type: 'lib' } } } },
             { from: { element: { type: 'api' } }, allow: { to: { element: { type: 'lib' } } } },
             {
-              from: { file: { categories: 'proxy' } },
+              from: { file: { categories: 'root' } },
               allow: { to: { element: { types: { anyOf: ['api', 'lib'] } } } },
             },
             {
@@ -192,8 +192,10 @@ export default defineConfig([
   ESLint 9); its `recommended` set runs as errors.
 - **Boundaries** (`eslint-plugin-boundaries` v7, `boundaries/dependencies`): `app → features → components/lib`, no
   feature-to-feature imports (captured feature names), the server API client only from `features/*/data.ts` and
-  `actions.ts`. It resolves `@/` through the TypeScript resolver `eslint-config-next` registers. Chosen over
-  `import/no-restricted-paths`: that rule needs one zone per feature to forbid feature-to-feature imports, and
+  `actions.ts`; `src/proxy.ts` and `src/instrumentation.ts` (file category `root`) import only `lib/api` and `lib`.
+  `lib/api/action-client.ts` belongs to the `api` element, so features may import it; like every file outside
+  `data.ts`/`actions.ts`, it cannot import `server.ts`. It resolves `@/` through the TypeScript resolver
+  `eslint-config-next` registers. Chosen over `import/no-restricted-paths`: that rule needs one zone per feature to forbid feature-to-feature imports, and
   `eslint-plugin-import` 2.32 does not declare ESLint 10 support.
 - `eslint-config-next` also enables `react-hooks` 7's React Compiler rules (`purity`, `refs`, `set-state-in-effect`,
   `immutability`) as errors. Never disable `rules-of-hooks` or `exhaustive-deps` inline without a written reason;
@@ -300,7 +302,7 @@ Validate where data enters with no compile-time guarantee:
 
 | Boundary | Example |
 |---|---|
-| Form input in Server Actions | `LeadInput.safeParse(Object.fromEntries(formData))` |
+| Form input in Server Actions | the action's `.inputSchema(LeadFormInput)` (next-safe-action): `z.instanceof(FormData).transform(Object.fromEntries).pipe(z.object(…))` |
 | URL `searchParams`, route params that are not from `generateStaticParams` | `SearchQuery.safeParse(await searchParams)` |
 | Environment variables | `serverEnv()` in `lib/env.server.ts` |
 | Webhooks and Route Handler bodies | the revalidate webhook |
@@ -375,10 +377,12 @@ and commit messages are English.
 - Function components only. Hooks at the top level, never conditional; custom hooks start with `use`.
 - **Derive, don't sync.** Values computed from props/state are computed during render, not copied into state by
   `useEffect`. Effects are for synchronizing with external systems, and every subscription has a cleanup.
-- No data fetching in `useEffect`: Server Components for page data, `$api.useQuery` in the cabinet.
+- No data fetching in `useEffect`: Server Components for page data, `$api.useQuery` in the cabinets.
 - Keys are stable ids from the API, never array indexes for lists that change.
-- Forms: `<form action={…}>` with `useActionState`; `useOptimistic` for optimistic UI; `useFormStatus` for a nested
-  submit button.
+- Forms: `<form action={formAction}>`, where `formAction` comes from `useActionState` given the action's
+  `.stateAction()` directly (it works before hydration and without JS; not next-safe-action's `useStateAction`).
+  React resets the form after every action, so the result carries the typed values back (`nextjs-patterns`).
+  `useOptimistic` for optimistic UI; `useFormStatus` for a nested submit button.
 - `useMemo`/`useCallback`/`memo` only with a measured reason or to keep a dependency stable.
 - `dangerouslySetInnerHTML` only through the `JsonLd` helper. Rich text from the API is rendered as React elements or
   sanitized on the Go side, never passed through raw.
@@ -417,7 +421,9 @@ and commit messages are English.
 
 - Vitest 5 + Testing Library for Client Components, hooks and pure helpers; query by role and label, as users do.
 - Async Server Components are not supported by Vitest: cover them with Playwright.
-- `actions.ts` and data modules import `server-only`; mock them (`vi.mock('../actions')`) in component tests.
+- `actions.ts` and data modules import `server-only`; mock them (`vi.mock('../actions')`) in component tests. A safe
+  action or action client itself is called directly in Vitest after `vi.mock('server-only', () => ({}))` and a mock
+  of `next/headers` (`tdd-workflow`).
 - Keep logic testable without Next: an async container loads and passes props to a synchronous view; parsing, problem
   mapping and flows are pure functions (`lib/api/problem.ts`, `features/leads/submit.ts`). Details: `tdd-workflow`.
 - No tests against a mocked Go API shape you typed by hand: build fixtures from the generated types and mock HTTP with

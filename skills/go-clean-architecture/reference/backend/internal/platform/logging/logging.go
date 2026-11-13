@@ -1,13 +1,15 @@
 // Package logging builds the process logger: JSON lines on stdout, with request-scoped
 // attributes taken from the context. Every log call that has a context uses the ...Context
-// method (sloglint enforces it), so the request ID reaches every line without being passed by
-// hand. Trace and span IDs join here once tracing is wired (golang-patterns, "Logging").
+// method (sloglint enforces it), so the request ID and the trace and span IDs reach every line
+// without being passed by hand; a log line and its trace find each other by trace_id.
 package logging
 
 import (
 	"context"
 	"io"
 	"log/slog"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 type requestIDKey struct{}
@@ -23,8 +25,8 @@ func RequestID(ctx context.Context) string {
 	return id
 }
 
-// New returns a JSON logger writing to w at level, which adds the context's request ID to
-// every record.
+// New returns a JSON logger writing to w at level, which adds the context's request ID and
+// trace context to every record.
 func New(w io.Writer, level slog.Leveler) *slog.Logger {
 	return slog.New(ContextHandler{slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})})
 }
@@ -32,10 +34,13 @@ func New(w io.Writer, level slog.Leveler) *slog.Logger {
 // ContextHandler adds request-scoped attributes from the context to each record.
 type ContextHandler struct{ slog.Handler }
 
-// Handle adds request_id when ctx has one.
+// Handle adds request_id, trace_id and span_id when ctx has them.
 func (h ContextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := RequestID(ctx); id != "" {
 		r.AddAttrs(slog.String("request_id", id))
+	}
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		r.AddAttrs(slog.String("trace_id", sc.TraceID().String()), slog.String("span_id", sc.SpanID().String()))
 	}
 	return h.Handler.Handle(ctx, r)
 }

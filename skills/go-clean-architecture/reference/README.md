@@ -8,7 +8,8 @@ instead of pasting code. Each module's `CLAUDE.md` shows the module template fil
 
 ## Verified
 On 2026-11-13 with Go 1.27.4, pgx v5.13.0, River v0.51.2, goose v3.30.1 (library),
-oapi-codegen v2.8.2, kin-openapi v0.153.0, nethttp-middleware v1.3.1, govulncheck v1.9.0 and the
+oapi-codegen v2.8.2, kin-openapi v0.153.0, nethttp-middleware v1.3.1, govulncheck v1.9.0,
+OpenTelemetry Go v1.47.0 (otelhttp v0.72.0, otelpgx v0.13.0, otelriver v0.12.0) and the
 binaries pinned in `tools/tools.lock` (golangci-lint 2.15.0, sqlc 1.31.1, go-arch-lint 1.19.1,
 goose CLI 3.29.0, squawk 2.71.0, vacuum 0.36.0, oasdiff 1.35.0), on PostgreSQL 18:
 - `make ci` passes: tools-check, generate-check, `go mod tidy -diff`, gofmt, `go vet`,
@@ -21,6 +22,14 @@ goose CLI 3.29.0, squawk 2.71.0, vacuum 0.36.0, oasdiff 1.35.0), on PostgreSQL 1
   layer, `entity.Restore*` outside a repository and a query on another module's schema
   (`internal/archtest`), a missing or edited River migration (`migrations/river_test.go`; then
   `go run ./cmd/rivermigrations` wrote the missing one with River's SQL unchanged).
+- Telemetry tests catch deliberate breakage:
+  - recording query arguments (`otelpgx.WithIncludeQueryParameters`) or dropping the pool's tracer;
+  - span names from the outer mux's `/v1/` pattern, or no route label on metrics or on validator
+    answers;
+  - the Host header's port in metric attributes, `client.address` from the leftmost
+    `X-Forwarded-For`;
+  - no `APIHeaders`, or a River client without `jobs.Middleware`: the job then has no
+    `traceparent`, and the worker's span no link to it.
 - `make api-breaking` against the previous version of this contract reports 3 breaking changes
   (the new required `Idempotency-Key`, sessions on two operations) and fails.
 - `make tools` downloads vacuum and oasdiff and checks their SHA-256 (earlier: a wrong SHA-256
@@ -41,7 +50,7 @@ goose CLI 3.29.0, squawk 2.71.0, vacuum 0.36.0, oasdiff 1.35.0), on PostgreSQL 1
 | `backend/internal/leads/delivery/facade` | the module's facade for other modules |
 | `backend/internal/leads/delivery/worker` | a River job and its periodic schedule |
 | `backend/internal/notifications` | a thin module: subscriber job, idempotent insert, golden JSON of job arguments |
-| `backend/internal/platform/*` | pool and timeouts, migrations under the owner role, `pgtest`, events bus, job outcome, problem writer, middleware, `ClientIP`, readiness and drain, logging with request IDs, `Secret` |
+| `backend/internal/platform/*` | pool and timeouts, migrations under the owner role, `pgtest`, events bus, job outcome, problem writer, middleware (API headers `no-store` and `nosniff`), `ClientIP`, readiness and drain, logging with request and trace IDs, `Secret`; OpenTelemetry: `telemetry.Setup`, `httpserver.Observe`/`Route`, `postgres.NewTracer`, `jobs.Middleware`, `telemetrytest` |
 | `backend/internal/archtest` | rules no linter checks: no struct tags in inner layers, `Restore*` only in repositories, a module's SQL stays in its schema |
 | `backend/cmd/api`, `backend/cmd/worker` | composition roots (`wire.go`: import aliases `<module><layer>`); end-to-end tests on PostgreSQL |
 | `backend/migrations` | goose SQL: default privileges, the module schemas, River's migrations as goose files (`cmd/rivermigrations` writes them after a River upgrade; `river_test.go` checks them) |
@@ -63,6 +72,10 @@ goose CLI 3.29.0, squawk 2.71.0, vacuum 0.36.0, oasdiff 1.35.0), on PostgreSQL 1
   `make test` runs everything; without it, `make test` adds `-short` and skips the PostgreSQL
   tests, and `go test` without `-short` fails them. CI runs `make ci` with the URL set.
 - On a machine with little memory: `make check LINT_FLAGS=--concurrency=1 GOMEMLIMIT=600MiB`.
+- Telemetry: set `OTEL_EXPORTER_OTLP_ENDPOINT` (an OpenTelemetry Collector, port 4318) to export
+  traces and metrics; `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` (`service.version`,
+  `deployment.environment.name`) name the process. `TRUSTED_PROXIES` (CIDRs, comma-separated) lists
+  the proxies whose `X-Forwarded-For` is believed.
 
 The contract and the migrations changed incompatibly from the previous version of this reference;
 nothing was deployed from it, so they were changed in place. A real project changes them only in

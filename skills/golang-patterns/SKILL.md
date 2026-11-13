@@ -163,15 +163,37 @@ log.InfoContext(ctx, "lead assigned", "lead_id", id, "lawyer_id", lawyerID, "ela
   in `httpserver.ErrorWriter` (unknown errors ERROR; 5xx from `apperr` and timeouts WARN; a client
   that went away DEBUG; 4xx not at all), job failures in River's logger.
 
-## Observability (when tracing and metrics are added)
+## Observability
 
-Not in the reference yet. When added:
-- OpenTelemetry with the `TraceContext` propagator set explicitly; the HTTP middleware outside
-  the request-ID middleware, so both see every request; `otelpgx` as the pool's tracer and River's
-  `otelriver` middleware, so a request's trace continues into SQL and into the jobs it enqueues.
-- RED metrics (rate, errors, duration) per route template and job kind; labels never carry IDs,
-  phone numbers or other personal data.
-- Check the current versions of these modules before adding them (`go list -m -versions`).
+OpenTelemetry, in the reference (`platform/telemetry`, `httpserver/observe.go`,
+`postgres.NewTracer`, `jobs.Middleware`):
+- **Setup first.** `telemetry.Setup(ctx, "api"|"worker", log)` runs in `cmd` before the pool and
+  the River client: instrumentations bind to the global providers when they are built. It sets the
+  W3C `TraceContext` propagator, a resource (`service.name` from code, overridden by
+  `OTEL_SERVICE_NAME`/`OTEL_RESOURCE_ATTRIBUTES`), and OTLP/HTTP exporters only for the signals
+  whose endpoint is set (`OTEL_EXPORTER_OTLP_ENDPOINT` or per signal). Without an endpoint spans
+  are still created, so log lines and jobs carry trace IDs. `defer telemetry.Flush(...)` runs last.
+- **HTTP.** `httpserver.Observe` wraps the `/v1` chain, outermost; probes stay outside. Span names
+  and `http.route` come from the route template (`Route` around the API's mux, `LabelRoute` where
+  the validator answers): never `r.URL.Path`, so IDs never become metric series. A request that
+  matches no operation is named by its method alone. `server.address`/`server.port` are fixed
+  (the Host header is the client's), and `client.address` comes from `ClientIP`.
+- **SQL.** `postgres.DefaultConfig` sets `NewTracer()`: a client span per query only inside a
+  traced request or job (River's polling has no parent, so no spans), named by the sqlc query
+  (`CreateLead`); the statement text has only placeholders. Never
+  `otelpgx.WithIncludeQueryParameters`: arguments are phone numbers. `Open` records pool stats.
+- **Jobs.** Every River client gets `Middleware: jobs.Middleware()` (otelriver): the inserting
+  span's `traceparent` goes into the job's metadata, and `river.work/<kind>` links back to it.
+- **Logs.** `logging.ContextHandler` adds `trace_id` and `span_id` next to `request_id`; a log line
+  and its trace find each other by `trace_id`.
+- **Attributes.** Labels and span attributes carry IDs and templates, never phone numbers, names or
+  query strings with them. Business spans in use cases are not needed: the request, SQL and job
+  spans already show where time goes; inner layers don't import OpenTelemetry.
+- **Tests.** `telemetrytest.Install(t)` (before building the handler or client; no
+  `t.Parallel`) records spans and metrics; see `observe_test.go`, `postgres_test.go`,
+  `cmd/api/api_test.go` (the job's `traceparent`) and `cmd/worker/worker_test.go` (the link).
+- Check the current versions before upgrading (`go list -m -versions`): otel 1.47.0, otelhttp
+  0.72.0, otelpgx 0.13.0, otelriver 0.12.0 in the reference.
 
 ## Configuration and secrets
 
@@ -189,9 +211,10 @@ Not in the reference yet. When added:
   `MaxHeaderBytes`. `WriteTimeout` doesn't cancel the handler's context, so the `Timeout`
   middleware gives every request a deadline shorter than it; `DeadlineExceeded` becomes 503
   `timeout`.
-- Middleware order on `/v1/`, outermost first: `RequestID` → `AccessLog` → `Recover` (logs the
-  stack, re-panics `http.ErrAbortHandler`) → `Timeout` → `LimitBody` (1 MiB) →
-  `http.NewCrossOriginProtection` → the validated API.
+- Middleware order on `/v1/`, outermost first (`cmd/api/wire.go` `newHandler`): `Observe` →
+  `RequestID` → `APIHeaders` (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff` on every
+  answer) → `AccessLog` → `Recover` (logs the stack, re-panics `http.ErrAbortHandler`) → `Timeout` →
+  `LimitBody` (1 MiB) → `http.NewCrossOriginProtection` → the validated API.
 - `/livez` (process up) and `/readyz` (database answers within 1 s, not draining). On SIGTERM:
   fail readiness, wait `SHUTDOWN_DRAIN_DELAY` for the load balancer to notice, then `Shutdown`
   with a grace period.

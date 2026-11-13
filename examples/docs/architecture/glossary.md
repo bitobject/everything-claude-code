@@ -37,7 +37,7 @@ things in two modules are listed in `context-map.md`.
 |---|---|---|
 | Lawyer | юрист | A professional who buys leads and works in the cabinet. |
 | Profile | анкета | What is known about a lawyer: legal topics, cities, contacts. |
-| Cabinet | личный кабинет | The part of the web where a logged-in lawyer works. |
+| Cabinet | личный кабинет | The part of the web where a logged-in user works; each role has its own (client `/account`, lawyer `/cabinet`, staff `/admin`). |
 
 ## catalog
 
@@ -51,7 +51,7 @@ things in two modules are listed in `context-map.md`.
 
 | Term (code) | Russian | Meaning |
 |---|---|---|
-| User | пользователь | Someone who can log in: a lawyer or staff. |
+| User | пользователь | Someone who can log in: a client, a lawyer or staff; each role has its own cabinet. |
 | Staff | сотрудник | Our operator with extra permissions. |
 | Session | сессия | A server-side login session, referenced by an HttpOnly cookie. |
 

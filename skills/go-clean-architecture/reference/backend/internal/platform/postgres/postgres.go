@@ -1,5 +1,6 @@
 // Package postgres opens connection pools and runs migrations. It is the only package that knows
-// DSNs and session settings; repositories receive the pool.
+// DSNs and session settings; repositories receive the pool. Pools are traced (NewTracer) and
+// report their statistics as OpenTelemetry metrics.
 package postgres
 
 import (
@@ -7,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +28,8 @@ type Config struct {
 	IdleInTransactionLimit time.Duration // a transaction left open without work
 	// AfterConnect runs on every new connection (tests use it to SET ROLE).
 	AfterConnect func(context.Context, *pgx.Conn) error
+	// Tracer traces queries; nil traces nothing. DefaultConfig sets NewTracer().
+	Tracer pgx.QueryTracer
 }
 
 // DefaultConfig is a starting point for the API and the worker.
@@ -35,7 +40,28 @@ func DefaultConfig(appName string) Config {
 		StatementTimeout:       5 * time.Second,
 		TransactionTimeout:     10 * time.Second,
 		IdleInTransactionLimit: 30 * time.Second,
+		Tracer:                 NewTracer(),
 	}
+}
+
+// NewTracer traces queries through the global OpenTelemetry providers: a client span per query
+// inside a traced request or job (none for River's own polling, which has no parent span), and
+// the db.client.operation.duration metric. Spans and metrics are named by the sqlc query
+// ("CreateLead", from the "-- name: CreateLead :one" line sqlc puts first), other statements by
+// their first word. Spans keep the statement text, which has only placeholders; argument values
+// (phone numbers) are never recorded: never add otelpgx.WithIncludeQueryParameters.
+func NewTracer() *otelpgx.Tracer {
+	return otelpgx.NewTracer(otelpgx.WithSpanNameCtxFunc(QueryName), otelpgx.WithMetricOperationName(QueryName))
+}
+
+// QueryName is the sqlc name of the query in sql, or its first SQL word in upper case.
+func QueryName(ctx context.Context, sql string) string {
+	if rest, ok := strings.CutPrefix(strings.TrimSpace(sql), "-- name: "); ok {
+		if name, _, _ := strings.Cut(rest, " "); name != "" {
+			return name
+		}
+	}
+	return otelpgx.SQLOperationName(ctx, sql)
 }
 
 // Open creates a pool whose sessions use UTC and the limits in c, and checks that the server
@@ -52,6 +78,7 @@ func Open(ctx context.Context, dsn string, c Config) (*pgxpool.Pool, error) {
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
+	cfg.ConnConfig.Tracer = c.Tracer
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		// pgx returns timestamptz in time.Local whatever the session's time zone is; scanning
 		// it as UTC here makes every time that leaves an adapter UTC, row mappings and views
@@ -81,6 +108,11 @@ func Open(ctx context.Context, dsn string, c Config) (*pgxpool.Pool, error) {
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	// Connections in use, idle and waited for, through the global meter provider.
+	if err := otelpgx.RecordStats(pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("pool metrics: %w", err)
 	}
 	return pool, nil
 }

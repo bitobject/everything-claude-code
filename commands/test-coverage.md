@@ -5,7 +5,7 @@ description: Find behavior that no test exercises (Go backend and web) by readin
 # /ecc:test-coverage
 
 Use coverage to find code nobody tested, then decide, branch by branch, whether a behavior is
-missing a test. Arguments narrow the scope (`./internal/leads/...`, `web/src/app/cabinet`).
+missing a test. Arguments narrow the scope (`./internal/leads/...`, `web/src/app/(private)/cabinet`).
 
 ## Go backend
 

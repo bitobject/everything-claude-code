@@ -35,11 +35,11 @@ func (uc *GetLead) Handle(ctx context.Context, p auth.Principal, id uuid.UUID) (
 ## Login and sessions
 
 Users log in only through Russian services: **email, Yandex ID, VK ID, or a phone number**
-(`STACK.md`, "Login"). 149-FZ restricts how Russian sites authorize Russian users (a Russian phone
-number, Gosuslugi, the biometric system, or an information system owned by a Russian citizen or
-company); whether email alone qualifies is a question for the lawyer. Open design questions
-(email: code or password; linking accounts that share an email) are decided in the identity
-module's ADR, not in code.
+(`STACK.md`, "Login"). Decided (2026-11-13): email by a one-time code or link, no passwords;
+clients, lawyers and staff all log in, each into their own cabinet (`/account`, `/cabinet`,
+`/admin`); accounts that share a verified email are merged automatically; sessions last 7 days
+idle and 30 days absolute. Email alone is accepted as a login method (the 149-FZ question is
+closed). The identity module's ADR records these with the details below.
 
 - **Yandex ID, VK ID**: OAuth 2.0 authorization code flow with PKCE, `state` checked on return,
   `nonce` where the provider issues ID tokens; the code is exchanged and the user info fetched by
@@ -53,11 +53,22 @@ module's ADR, not in code.
   single use, short-lived, consumed with a conditional update, and never logged.
 - **Session**: an opaque random ID (`crypto/rand`), stored hashed, in the cookie
   `__Host-session` (`Secure; Path=/`, no `Domain`; `HttpOnly; SameSite=Lax`). The prefix makes the
-  browser refuse it from a subdomain or over HTTP. Idle and absolute expiry (values in the ADR);
-  a new ID on login and on privilege change; revoked on logout.
+  browser refuse it from a subdomain or over HTTP. Expiry: 7 days without activity, 30 days in
+  any case; a new ID on login and on privilege change; revoked on logout.
 - **Sensitive changes** (phone, email, linked providers) require logging in again just before
   the change, and revoke the user's other sessions. Users see their active sessions (device,
   time, rough location) and can end any of them.
+- **Roles**: client, lawyer, staff. The session gives the use case a principal with the user ID
+  and role; each use case checks both (a client sees only their own leads, a lawyer only the leads
+  assigned to them, staff only what their role allows). A cabinet's URL prefix is routing, not
+  authorization.
+- **Automatic merge by email** (the chosen option, so it needs these safeguards): merge only on an
+  email the provider marks as verified *and* that the existing account verified with our own code
+  or link; never on an unverified or provider-unconfirmed email, never on a phone number from a
+  provider profile. On every merge or new linked provider: email the account's address, log the
+  event (user ID, provider, time; no email in the log), and let the user unlink a provider from
+  the cabinet, which ends that provider's sessions. Staff accounts are never merged
+  automatically: a staff role can't be reached by linking a provider.
 - Login and recovery responses never reveal whether an account, a phone or an email exists.
 - Never put tokens in `localStorage` or in URLs.
 - **CSRF**: cookie-authenticated mutations go through `http.NewCrossOriginProtection().Handler(h)`
@@ -73,15 +84,16 @@ Layers, cheapest first; each one is required:
 2. **The form**: a honeypot field and a minimum fill time, checked in the Server Action, never
    sent to Go (`nextjs-patterns` skill). A bot that fills every field or submits in 300 ms gets the
    same "thanks" page as a person and nothing is created.
-3. **Yandex SmartCaptcha**: the form sends the widget's token; Go verifies it server side with
+3. **Yandex SmartCaptcha** (built with the first real form): the form sends the widget's token; Go verifies it server side with
    the server key and the client IP through a `usecase` port (`HumanCheck`) implemented in
    `gateway/smartcaptcha`, with a short timeout, before the transaction. A retry of a request
    whose `Idempotency-Key` is already claimed returns the first response before the captcha is
    checked: the retry carries the same, already used token. Check the current validation
-   endpoint and parameters in SmartCaptcha's documentation. A form submitted without
-   JavaScript has no token: how such submissions are treated is an open decision. Recommended when the
-   provider is down: sending codes fails closed (an SMS costs money); lead forms fail open with
-   every limit below still in force; both log a warning.
+   endpoint and parameters in SmartCaptcha's documentation. Decided (2026-11-13):
+   - a lead form submitted without JavaScript has no token: Go accepts it under stricter limits
+     (per phone and per IP) and marks the lead unverified;
+   - the provider is down: sending codes fails closed (an SMS costs money); lead forms fail open
+     with every limit below still in force; both log a warning.
 4. **Business limits in PostgreSQL**, in the use case: leads per phone per day (reference:
    `usecase.MaxLeadsPerPhone`, 429 `lead.rate_limited` with `Retry-After`), codes per number per
    hour and per day, a total SMS budget per day. Approximate under concurrency is acceptable for
@@ -163,13 +175,15 @@ Next.js servers, so `ClientIP` finds the same client. Nothing else interprets `X
 
 `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`,
 `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`,
-`frame-ancestors 'none'` (or `X-Frame-Options: DENY`). The Go API answers JSON only, with
-`X-Content-Type-Options: nosniff`.
+`frame-ancestors 'none'` (or `X-Frame-Options: DENY`). The Go API answers JSON only, every
+response with `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`
+(`httpserver.APIHeaders`): answers depend on the session, and one careless proxy cache rule would
+serve lawyer A's leads to lawyer B.
 
 `Content-Security-Policy`: a nonce-based policy needs every page rendered per request (Next.js:
 "all pages must be dynamically rendered", incompatible with Partial Prerendering), so it can't
 cover the static SEO pages. Don't turn static pages dynamic for it: which policy the public
-pages and the cabinet get is an open decision (STACK.md).
+pages and the cabinets get is an open decision (STACK.md).
 
 ## Availability
 

@@ -38,6 +38,10 @@ vendors:
   oapi-validator:
     in:
       - github.com/oapi-codegen/nethttp-middleware
+  otel:
+    in:
+      - go.opentelemetry.io/otel
+      - go.opentelemetry.io/otel/**
 
 components:
   kernel:
@@ -59,6 +63,8 @@ components:
     in: internal/platform/postgres/pgtest
   api-test:
     in: internal/api/apitest
+  platform-telemetrytest:
+    in: internal/platform/telemetry/telemetrytest
 
   # --- module: leads (full profile) -------------------------------------------
   leads-contract:
@@ -107,6 +113,8 @@ deps:
   api-test:
     mayDependOn: [api, openapi, platform]
     canUse: [oapi]
+  platform-telemetrytest:
+    canUse: [otel]
 
   leads-contract: # the module's public API: stdlib + the shared kernel only
     mayDependOn: [kernel]

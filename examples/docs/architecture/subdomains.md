@@ -47,8 +47,9 @@ reason in its `CLAUDE.md`.
 5. `partners`: the plugin expects partner systems to create leads through the API (with an
    `Idempotency-Key`). Only a lead source feeding `leads`, or more (partner accounts, payouts)?
    Which type?
-6. Login (decided in the plugin's `STACK.md`: only Russian services — email, Yandex ID, VK ID or a
-   phone number). Still open: email by one-time code or by password; whether accounts that share
-   a verified email are linked automatically or only from the cabinet after logging in; who logs
-   in (lawyers and staff only, or clients too); whether email login alone satisfies 149-FZ (a
-   question for the lawyer). Codes by SMS and email make `identity` depend on `notifications`.
+6. Login, decided (`STACK.md`, "Login"): only Russian services — email by a one-time code or link
+   (no passwords), Yandex ID, VK ID or a phone code; clients, lawyers and staff log in, each into
+   their own cabinet; accounts with the same verified email are merged automatically, with the
+   safeguards in the `security-review` skill; sessions 7 days idle, 30 days absolute. Still open
+   for the identity ADR: whether one person can hold several roles (a lawyer who is also a
+   client). Codes by SMS and email make `identity` depend on `notifications`.

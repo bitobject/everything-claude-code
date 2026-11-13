@@ -28,7 +28,7 @@ and deviations: `docs/adr/` (an accepted ADR wins over `STACK.md`).
 - `backend/migrations/` — goose SQL, one sequence (new files timestamped, renumbered by
   `make migrations-fix` before merging; River's written by `go run ./cmd/rivermigrations`).
   `backend/sqlc.yaml` — one entry per module.
-- `web/src/app/(public)` — indexable pages; `web/src/app/(cabinet)` — logged-in UI;
+- `web/src/app/(public)` — indexable pages; `web/src/app/(private)` — the cabinets (`account`, `cabinet`, `admin`);
   `web/src/lib/api/` — generated schema + server/browser clients.
 - `docs/plans/<slug>.md` — plans (acceptance criteria, steps); `docs/adr/` — decisions (MADR 4.0);
   `docs/architecture/` — subdomains, context map, C4, glossary.

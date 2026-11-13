@@ -32,6 +32,10 @@ Detail: skills `go-clean-architecture`, `golang-patterns`, `golang-testing`, `po
 - **Logging**: injected `*slog.Logger`, `…Context` methods, IDs only; never phones, names,
   emails, problem texts, tokens, request bodies (sloglint rejects such keys). Types holding
   personal data or secrets mask themselves (`LogValue`, `config.Secret`).
+- **Telemetry**: spans and metric labels are named by route templates and sqlc query names, never
+  raw paths, IDs or personal data; never `otelpgx.WithIncludeQueryParameters`; every River client
+  gets `Middleware: jobs.Middleware()`; `telemetry.Setup` runs in `cmd` before the pool and the
+  clients; inner layers don't import OpenTelemetry.
 - **Jobs**: args with `json` tags, fields only added, IDs only, a golden-JSON test; workers end
   with `jobs.Outcome(err)` and are idempotent.
 - **Dependencies**: standard library first; a new module in `go.mod` is the user's decision. Heavy

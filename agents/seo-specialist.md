@@ -30,7 +30,8 @@ Decide which audit you are doing and say so in the first line of the report:
    `landings/sitemap.ts`, `lib/routes.ts`, `proxy.ts`, `redirects()` in `next.config.ts`, the root `layout.tsx`.
 2. **Rendering guarantees.** Each SEO route: `ensureStatic = 'navigation'` on programmatic routes, data through
    `'use cache'`d functions, no `cookies()`/`headers()`/`searchParams`/`connection()` in the route or its layouts,
-   main content not behind `loading.tsx`, `ssr: false` or a client-only component, `notFound()` not inside a
+   main content not behind `<Suspense>`, `loading.tsx`, `ssr: false` or a client-only component (YandexBot gets
+   the request-time render, where a boundary streams the content in a hidden segment), `notFound()` not inside a
    streamed boundary.
 3. **Signals per route type.** `generateMetadata` (title, description, canonical via `lib/routes.ts`, `robots` from
    the API's `indexable`), one H1, breadcrumbs, JSON-LD typed with schema-dts and matching visible content, internal

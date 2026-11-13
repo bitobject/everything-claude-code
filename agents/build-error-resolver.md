@@ -60,6 +60,7 @@ pnpm build                                                   # runs tsc again ov
 | typescript-eslint crashes in `typescript-estree` (`reading 'Cjs'`), or pnpm reports peer `typescript@<6.1.0` unmet | `typescript` was upgraded to 7.x (no JS API) or past 6.0 | restore the pinned `"typescript": "6.0.3"`; TS 7 is deferred (`STACK.md`) |
 | openapi-typescript: `reading 'createKeywordTypeNode'` | same cause | same fix |
 | pnpm peer warning: openapi-typescript wants `typescript ^5.x` | expected with 6.0.3 | nothing; it is a warning, not a failure |
+| `TS2769: No overload matches this call` on `useActionState(submitLead, initialState)` with a next-safe-action `stateAction` | `handleValidationErrorsShape` has no return type annotation; its inferred literal type makes the action's result differ from the state type | annotate the return type (`Promise<LeadValidationErrors>`); never cast the action |
 
 ## Next.js 16 build and prerender
 
@@ -68,7 +69,7 @@ Message ids are the `nextjs.org/docs/messages/<id>` pages the build links to.
 | Message / id | Cause | Minimal fix |
 |---|---|---|
 | `next-request-in-use-cache` | `cookies()`/`headers()`/`searchParams` inside `'use cache'` or a helper it calls | read the value outside, pass a primitive argument |
-| `blocking-prerender-dynamic` (blocking route) | uncached fetch or runtime API outside `<Suspense>` | public data: add `'use cache'` + `cacheLife` to the data function; personal data: wrap the component in `<Suspense>` |
+| `blocking-prerender-dynamic` (blocking route) | uncached fetch or runtime API outside `<Suspense>` | public data: add `'use cache'` + `cacheLife` to the data function; personal data (cabinets only): wrap the component in `<Suspense>`, never an SEO page's main content |
 | `static-route-dynamic`, `static-route-runtime` ("must be fully static") | route with `ensureStatic = 'navigation'` reads uncached or request data | cache the data function; move request-dependent UI into a Client Component; keep `ensureStatic` |
 | `blocking-prerender-metadata-dynamic` / `-runtime` | `generateMetadata` uses uncached or request data | use the same cached data function as the page |
 | `empty-generate-static-params` | `generateStaticParams` returned `[]` | return at least one real param |
@@ -119,6 +120,7 @@ build failure unless `strict-peer-dependencies` is on.
 | `ERR_PNPM_BAD_RUNTIME_VERSION` / package manager mismatch | `devEngines` in `package.json`: switch to the Node and pnpm from the repository's `.tool-versions`; never loosen `devEngines` |
 | `ERR_PNPM_OUTDATED_LOCKFILE` with `--frozen-lockfile` | `package.json` changed without the lockfile: run `pnpm install` and include `pnpm-lock.yaml`, only if the `package.json` change is intended |
 | `Module not found` for a package that "works elsewhere" | pnpm does not expose transitive dependencies: `pnpm add <pkg>` in `web/` |
+| Unmet peers of `@vercel/otel` after an OpenTelemetry upgrade | `@vercel/otel` 2.x accepts only the OpenTelemetry 2.x line (`@opentelemetry/api` <2, `sdk-trace-base`/`resources`/`sdk-metrics` <3, `api-logs`/`sdk-logs`/`instrumentation` <0.300; the 2.x SDK packages also need `api` <1.10): keep the versions in `STACK.md` §4 and upgrade them together; OpenTelemetry JS 3.x waits for `@vercel/otel` support |
 | Two copies of React or Next (`pnpm why react`) | align versions in `package.json`; never hand-edit the lockfile |
 | Stale build artefacts | `rm -rf .next` and rebuild; never delete `node_modules` or the lockfile as a first step |
 

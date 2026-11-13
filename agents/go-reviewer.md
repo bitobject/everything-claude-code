@@ -48,12 +48,16 @@ When the project disagrees with the plugin, the project wins; say so in the repo
 - A call to another module, an external service or anything slow inside `Do`/`Update`; a
   repository on a transaction that opens a savepoint.
 - Business decisions in handlers, workers or SQL instead of entities/use cases.
+- Telemetry wired around the reference (`golang-patterns`, "Observability"): a River client without
+  `jobs.Middleware()` (its jobs lose the trace), a span or metric named from `r.URL.Path` or a
+  raw ID instead of the route template, OpenTelemetry imported in `entity` or `usecase`.
 
 ### CRITICAL — correctness and security
 - SQL built by string concatenation (all SQL goes through sqlc parameters).
 - Personal data (phones, names, emails, free-text descriptions), secrets or tokens in logs, error
   messages returned to clients, problem documents (no submitted values in `errors[]` or
-  `detail`), events, job args, metric labels or URLs.
+  `detail`), events, job args, metric labels, span names or attributes, or URLs. Query arguments
+  recorded by the pgx tracer (`otelpgx.WithIncludeQueryParameters`).
 - Missing authorization check in a use case that acts on someone else's resource.
 - Data races: shared state without a mutex/atomic; goroutines capturing state they mutate.
 - Ignored errors on writes, commits, `Close` of writers; `err` shadowed and lost.

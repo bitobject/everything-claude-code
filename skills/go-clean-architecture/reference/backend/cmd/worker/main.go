@@ -26,8 +26,10 @@ import (
 	"example.com/app/internal/notifications"
 	"example.com/app/internal/platform/clock"
 	"example.com/app/internal/platform/config"
+	"example.com/app/internal/platform/jobs"
 	"example.com/app/internal/platform/logging"
 	"example.com/app/internal/platform/postgres"
+	"example.com/app/internal/platform/telemetry"
 )
 
 type cfg struct {
@@ -53,6 +55,13 @@ func run() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	log := logging.New(os.Stdout, c.LogLevel)
+
+	// Before the pool and the client: their instrumentation binds to the providers it installs.
+	shutdownTelemetry, err := telemetry.Setup(ctx, "worker", log)
+	if err != nil {
+		return err
+	}
+	defer telemetry.Flush(ctx, log, shutdownTelemetry) // runs last: after the jobs have stopped
 
 	pool, err := postgres.Open(ctx, c.DatabaseURL.Reveal(), postgres.DefaultConfig("worker"))
 	if err != nil {
@@ -105,6 +114,7 @@ func newClient(pool *pgxpool.Pool, log *slog.Logger, maxWorkers int) (*river.Cli
 		Queues:       map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: maxWorkers}},
 		Workers:      workers,
 		PeriodicJobs: leadsworker.PeriodicJobs(), // slices.Concat the next module's
+		Middleware:   jobs.Middleware(),          // a span per job, linked to the request that enqueued it
 	})
 	if err != nil {
 		return nil, fmt.Errorf("river client: %w", err)

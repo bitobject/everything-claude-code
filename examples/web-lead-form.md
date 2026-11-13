@@ -2,31 +2,61 @@
 
 The complete code behind the "Server Actions and forms" section of the `nextjs-patterns` skill, with its tests.
 Paths are relative to `web/`. Verified on 2026-11-13 in a scratch app with the `STACK.md` versions (Next.js 16.4.6,
-React 19.3.1, TypeScript 6.0.3, zod 4.6.7, openapi-fetch 0.17.0, Vitest 5.1.0, Ajv 8.20.0, yaml 2.9.1) against the
-reference contract `skills/go-clean-architecture/reference/api/openapi.yaml`: `tsc --noEmit`, ESLint
-(`strictTypeChecked`, boundaries, jsx-a11y-x), Vitest, `next build`, and a no-JavaScript form submit against
-`next start` with a stand-in for the Go API.
+React 19.3.1, TypeScript 6.0.3, zod 4.6.7, next-safe-action 8.7.3, openapi-fetch 0.17.0, Vitest 5.1.0, Ajv 8.20.0,
+yaml 2.9.1) against the reference contract `skills/go-clean-architecture/reference/api/openapi.yaml`:
+`tsc --noEmit`, ESLint (`strictTypeChecked`, boundaries, jsx-a11y-x), Vitest, `next build`, and form submits
+without JavaScript against `next start` with a stand-in for the Go API.
 
 What it shows:
-- every error state returns the typed `values`; inputs use them as `defaultValue` (React 19 resets the form after
-  every action, also one that returns an error);
+- the action is a next-safe-action `stateAction` passed straight to React's `useActionState`, so the form works
+  before hydration and without JavaScript;
+- React 19 resets the form after every action, also one that returns an error: the schema's validation errors are
+  shaped to carry the typed `values`, Go's answers come back as typed `data` with them, and inputs use them as
+  `defaultValue`;
 - the request body is an object literal of the parsed fields; the phone is normalized to the contract's pattern;
 - `Idempotency-Key` is minted in the browser at the first submit (or by the action without JavaScript) and kept for
   retries; `idempotency.key_reused` is retried once with a new key;
-- honeypot and fill time are checked in the action and never sent to Go; SmartCaptcha's `smart-token` would be
-  passed through as the contract declares it (not shown: it needs the contract field and the widget script);
+- honeypot and fill time are checked in the action and never sent to Go; SmartCaptcha's `smart-token` will be
+  passed through as the contract declares it (built with the first real form; without JavaScript there is no token
+  and Go accepts the submission under stricter limits);
 - deploy skew ("Failed to find Server Action") gets a reload that keeps the input.
 
 Shared code it imports, shown in `nextjs-patterns`: `lib/api/server.ts` (`apiFor`), `lib/api/forwarded.ts`
-(`requestHeaders`), `lib/api/schema.ts` (generated).
+(`requestHeaders`, `sessionHeaders`), `lib/api/schema.ts` (generated).
+
+## `src/lib/api/action-client.ts`
+
+The next-safe-action clients every Server Action is built with.
+
+```ts
+import 'server-only'
+import { createSafeActionClient } from 'next-safe-action'
+import { requestHeaders, sessionHeaders } from './forwarded'
+
+/** Server Actions of public forms: the context carries the proxy's client IP and request id for Go. */
+export const actionClient = createSafeActionClient({
+  // Never send an exception's text to the browser; the log line has the error name and the request id has the rest.
+  handleServerError: (error) => {
+    console.error('Server Action failed', error.name)
+    return 'Не удалось выполнить действие. Попробуйте ещё раз.'
+  },
+}).use(async ({ next }) => next({ ctx: { forwarded: await requestHeaders() } }))
+
+/** Server Actions in the cabinets: also the session cookie, verbatim. Go authorizes every call. */
+export const sessionActionClient = actionClient.use(async ({ next }) =>
+  next({ ctx: { forwarded: await sessionHeaders() } }),
+)
+```
 
 ## `src/features/leads/form.ts`
 
-State and field names shared by the action and the form.
+State types and field names shared by the action and the form.
 
 ```ts
-// Lead form state and field names, shared by the Server Action and the form. No zod here: it would
-// ship to the browser with the form.
+// Lead form state, shared by the Server Action and the form. Type-only imports: zod and next-safe-action's
+// server code stay out of the browser bundle.
+import type { SafeActionResult } from 'next-safe-action'
+import type { LeadFormInput } from './schema'
 
 /** Hidden anti-spam fields. The action checks them and never sends them to Go. */
 export const HONEYPOT_FIELD = 'company_site' // a name browsers do not autofill
@@ -37,68 +67,37 @@ export const MIN_FILL_MS = 3_000
 export type LeadFormValues = { phone: string }
 export type LeadFieldErrors = Partial<Record<keyof LeadFormValues, string>>
 
-export type LeadFormState =
-  | { status: 'idle' }
-  | { status: 'invalid'; values: LeadFormValues; fieldErrors: LeadFieldErrors; idempotencyKey?: string }
-  | { status: 'rejected'; values: LeadFormValues; code: string; retryAfterSeconds?: number; idempotencyKey?: string }
-  | { status: 'failed'; values: LeadFormValues; idempotencyKey?: string } // retry with the same key
+/** The input schema's errors, shaped to carry the typed values back. */
+export type LeadValidationErrors = {
+  fieldErrors: LeadFieldErrors
+  pageOutdated: boolean // only the page's own hidden fields failed
+  values: LeadFormValues
+  idempotencyKey?: string
+}
+
+/** The action's answer once the input passed the schema: Go's answer or the anti-spam verdict. */
+export type LeadFormData =
   | { status: 'sent' }
-```
+  | { status: 'invalid'; values: LeadFormValues; fieldErrors: LeadFieldErrors; idempotencyKey: string }
+  | { status: 'rejected'; values: LeadFormValues; code: string; retryAfterSeconds?: number; idempotencyKey: string }
+  | { status: 'failed'; values: LeadFormValues; idempotencyKey?: string } // retry with the same key
 
-## `src/features/leads/copy.ts`
-
-Russian copy keyed by problem `code`.
-
-```ts
-import type { LeadFormState } from './form'
-
-export const PHONE_ERROR = 'Проверьте номер телефона'
-
-/** Russian copy for a problem `code` from Go (codes are listed in the contract's x-problem-codes). */
-function rejectionMessage(code: string, retryAfterSeconds?: number): string {
-  switch (code) {
-    case 'lead.rate_limited': {
-      const minutes = Math.max(1, Math.ceil((retryAfterSeconds ?? 60) / 60))
-      return `Слишком много заявок подряд. Попробуйте через ${String(minutes)} мин.`
-    }
-    case 'lead.invalid_topic':
-    case 'lead.invalid_city':
-    case 'request.invalid':
-      return 'Страница устарела. Обновите её и отправьте заявку ещё раз.'
-    default:
-      return 'Не удалось отправить заявку. Проверьте номер и попробуйте ещё раз.'
-  }
-}
-
-export function formMessage(state: LeadFormState): string | undefined {
-  switch (state.status) {
-    case 'idle':
-    case 'invalid':
-    case 'sent':
-      return undefined
-    case 'failed':
-      return 'Не удалось отправить заявку. Попробуйте ещё раз: повторная отправка не создаст дубль.'
-    case 'rejected':
-      return rejectionMessage(state.code, state.retryAfterSeconds)
-  }
-}
+export type LeadFormState = SafeActionResult<string, typeof LeadFormInput, LeadValidationErrors, LeadFormData>
 ```
 
 ## `src/features/leads/schema.ts`
 
-Parsing: phone normalization, the contract-shaped body, anti-spam verdict, the key.
+The input schema (FormData in), phone normalization, the raw values and the key.
 
 ```ts
-// Parsing of the lead form. Server side only (zod stays out of the browser bundle).
+// The lead form's input schema and helpers. Server side only (zod stays out of the browser bundle).
 import * as z from 'zod'
-import type { components } from '@/lib/api/schema'
 import { PHONE_ERROR } from './copy'
-import { ELAPSED_FIELD, HONEYPOT_FIELD, MIN_FILL_MS, type LeadFieldErrors, type LeadFormValues } from './form'
-
-type CreateLeadRequest = components['schemas']['CreateLeadRequest']
+import { ELAPSED_FIELD, HONEYPOT_FIELD, type LeadFormValues } from './form'
 
 /** The contract's CreateLeadRequest.phone pattern. */
 const PHONE_PATTERN = /^\+7[0-9]{10}$/
+const KEY_PATTERN = /^[A-Za-z0-9_-]{16,64}$/
 
 /** "+7 (999) 123-45-67", "8 999 123 45 67", "9991234567" → "+79991234567"; anything else → "" (fails the pattern). */
 export function normalizePhone(input: string): string {
@@ -106,47 +105,42 @@ export function normalizePhone(input: string): string {
   return national === undefined ? '' : `+7${national}`
 }
 
-// z.object, never z.strictObject: FormData also carries React's $ACTION_* keys and the anti-spam fields.
-// Bounds are the contract's; Go stays the authority.
-const LeadFormInput = z.object({
-  phone: z
-    .string({ error: PHONE_ERROR })
-    .transform(normalizePhone)
-    .pipe(z.string().regex(PHONE_PATTERN, { error: PHONE_ERROR })),
-  topic: z.string().trim().min(3).max(200),
-  city: z.string().trim().min(2).max(100),
-})
-
-export type LeadFormParse = { ok: true; body: CreateLeadRequest } | { ok: false; fieldErrors: LeadFieldErrors } // empty when only the page's hidden fields failed
-
-export function parseLeadForm(formData: FormData): LeadFormParse {
-  const parsed = LeadFormInput.safeParse(Object.fromEntries(formData))
-  if (!parsed.success) {
-    const phone = z.flattenError(parsed.error).fieldErrors.phone?.[0]
-    return { ok: false, fieldErrors: phone === undefined ? {} : { phone } }
-  }
-  const { phone, topic, city } = parsed.data
-  return { ok: true, body: { phone, topic, city } } // a literal: a field the contract lacks fails tsc
-}
+/**
+ * FormData in, the fields the action needs out. z.object, never z.strictObject: FormData also carries React's
+ * $ACTION_* fields. Bounds are the contract's; Go stays the authority.
+ */
+export const LeadFormInput = z
+  .instanceof(FormData)
+  .transform((data) => Object.fromEntries(data))
+  .pipe(
+    z.object({
+      phone: z
+        .string({ error: PHONE_ERROR })
+        .transform(normalizePhone)
+        .pipe(z.string().regex(PHONE_PATTERN, { error: PHONE_ERROR })),
+      topic: z.string().trim().min(3).max(200),
+      city: z.string().trim().min(2).max(100),
+      idempotencyKey: z.string().optional(),
+      [ELAPSED_FIELD]: z.string().optional(),
+      [HONEYPOT_FIELD]: z.string().optional(),
+    }),
+  )
+export type LeadSubmission = z.output<typeof LeadFormInput>
 
 const text = (value: FormDataEntryValue | null): string => (typeof value === 'string' ? value : '')
 
+/** What the visitor typed, from the raw FormData. */
 export function leadFormValues(formData: FormData): LeadFormValues {
   return { phone: text(formData.get('phone')).slice(0, 40) }
 }
 
-/** The key the browser minted (or the action returned last time); undefined when absent or malformed. */
-export function idempotencyKeyOf(formData: FormData): string | undefined {
-  const key = text(formData.get('idempotencyKey'))
-  return /^[A-Za-z0-9_-]{16,64}$/.test(key) ? key : undefined
+/** A well-formed key, or undefined (absent, tampered with). */
+export function validKey(key: string | null | undefined): string | undefined {
+  return key !== null && key !== undefined && KEY_PATTERN.test(key) ? key : undefined
 }
 
-export type SpamVerdict = 'ok' | 'honeypot' | 'too_fast'
-
-export function spamVerdict(formData: FormData): SpamVerdict {
-  if (text(formData.get(HONEYPOT_FIELD)) !== '') return 'honeypot'
-  const elapsed = text(formData.get(ELAPSED_FIELD)) // empty without JS: nothing to measure, the honeypot still works
-  return elapsed !== '' && Number(elapsed) < MIN_FILL_MS ? 'too_fast' : 'ok'
+export function idempotencyKeyOf(formData: FormData): string | undefined {
+  return validKey(text(formData.get('idempotencyKey')))
 }
 ```
 
@@ -159,8 +153,8 @@ The submission flow without Next or HTTP; the action injects `send`.
 import { fieldErrorCodes, type Problem } from '@/lib/api/problem'
 import type { components } from '@/lib/api/schema'
 import { PHONE_ERROR } from './copy'
-import type { LeadFormState, LeadFormValues } from './form'
-import { idempotencyKeyOf, leadFormValues, parseLeadForm, spamVerdict } from './schema'
+import { ELAPSED_FIELD, HONEYPOT_FIELD, MIN_FILL_MS, type LeadFormData, type LeadFormValues } from './form'
+import { validKey, type LeadSubmission } from './schema'
 
 type CreateLeadRequest = components['schemas']['CreateLeadRequest']
 
@@ -175,30 +169,27 @@ export type SubmitDeps = {
   newIdempotencyKey: () => string
 }
 
-export async function submitLeadForm(formData: FormData, deps: SubmitDeps): Promise<LeadFormState> {
-  const values = leadFormValues(formData)
-  const submittedKey = idempotencyKeyOf(formData)
-  const verdict = spamVerdict(formData)
-  if (verdict === 'honeypot') return { status: 'sent' } // a bot: pretend success, nothing reaches Go
+export async function submitLeadForm(
+  input: LeadSubmission,
+  values: LeadFormValues,
+  deps: SubmitDeps,
+): Promise<LeadFormData> {
+  if ((input[HONEYPOT_FIELD] ?? '') !== '') return { status: 'sent' } // a bot: pretend success, nothing reaches Go
+  const submittedKey = validKey(input.idempotencyKey)
+  const elapsed = input[ELAPSED_FIELD] ?? '' // empty without JS: nothing to measure, the honeypot still works
+  if (elapsed !== '' && Number(elapsed) < MIN_FILL_MS) return { status: 'failed', values, idempotencyKey: submittedKey }
 
-  const parsed = parseLeadForm(formData)
-  if (!parsed.ok) {
-    return parsed.fieldErrors.phone === undefined
-      ? { status: 'rejected', values, code: 'request.invalid', idempotencyKey: submittedKey }
-      : { status: 'invalid', values, fieldErrors: parsed.fieldErrors, idempotencyKey: submittedKey }
-  }
-  if (verdict === 'too_fast') return { status: 'failed', values, idempotencyKey: submittedKey } // a person retries
-
+  const body: CreateLeadRequest = { phone: input.phone, topic: input.topic, city: input.city } // a literal: no extras
   let key = submittedKey ?? deps.newIdempotencyKey() // no JS: the action mints the key
-  let result = await deps.send(parsed.body, key)
+  let result = await deps.send(body, key)
   if (result.kind === 'problem' && result.problem?.code === 'idempotency.key_reused') {
     key = deps.newIdempotencyKey() // the visitor edited the input after an error: this is a new submission
-    result = await deps.send(parsed.body, key)
+    result = await deps.send(body, key)
   }
-  return toLeadFormState(result, values, key)
+  return toLeadFormData(result, values, key)
 }
 
-function toLeadFormState(result: CreateLeadResult, values: LeadFormValues, key: string): LeadFormState {
+function toLeadFormData(result: CreateLeadResult, values: LeadFormValues, key: string): LeadFormData {
   switch (result.kind) {
     case 'created':
       return { status: 'sent' }
@@ -225,39 +216,120 @@ function toLeadFormState(result: CreateLeadResult, values: LeadFormValues, key: 
 
 ## `src/features/leads/actions.ts`
 
-The Server Action: wiring only.
+The stateful Server Action.
 
 ```ts
 'use server'
-import { requestHeaders } from '@/lib/api/forwarded'
+import { flattenValidationErrors } from 'next-safe-action'
+import { actionClient } from '@/lib/api/action-client'
 import { asProblem, retryAfterSeconds } from '@/lib/api/problem'
 import { apiFor } from '@/lib/api/server'
-import type { LeadFormState } from './form'
+import { idempotencyKeyOf, LeadFormInput, leadFormValues } from './schema'
 import { submitLeadForm, type CreateLeadResult } from './submit'
+import type { LeadFormData, LeadValidationErrors } from './form'
 
-export async function submitLead(_prev: LeadFormState, formData: FormData): Promise<LeadFormState> {
-  const api = apiFor(await requestHeaders()) // client IP, request id, traceparent; a public form sends no cookie
-  return submitLeadForm(formData, {
-    newIdempotencyKey: () => crypto.randomUUID(),
-    send: async (body, key): Promise<CreateLeadResult> => {
-      try {
-        const { error, response } = await api.POST('/v1/leads', {
-          params: { header: { 'Idempotency-Key': `"${key}"` } }, // a Structured Field String: quoted
-          body,
-        })
-        if (error === undefined) return { kind: 'created' }
-        return {
-          kind: 'problem',
-          status: response.status,
-          problem: asProblem(error),
-          retryAfterSeconds: retryAfterSeconds(response),
-        }
-      } catch (error: unknown) {
-        console.error('createLead: Go API unreachable', error instanceof Error ? error.name : 'unknown')
-        return { kind: 'unreachable' } // timeout or network: the retry reuses the key, so no duplicate
-      }
+// A stateful action: React's useActionState calls it with (previous result, FormData), which also works
+// before hydration and without JavaScript.
+export const submitLead = actionClient
+  .inputSchema(LeadFormInput, {
+    // React resets the form after every action: send what was typed back with the errors.
+    handleValidationErrorsShape: (errors, { clientInput }): Promise<LeadValidationErrors> => {
+      const { fieldErrors } = flattenValidationErrors(errors)
+      const phone = fieldErrors.phone?.[0]
+      return Promise.resolve({
+        fieldErrors: phone === undefined ? {} : { phone },
+        pageOutdated: phone === undefined, // only the page's hidden city/topic failed
+        values: leadFormValues(clientInput),
+        idempotencyKey: idempotencyKeyOf(clientInput),
+      })
     },
   })
+  .stateAction<LeadFormData>(async ({ parsedInput, clientInput, ctx }) => {
+    const api = apiFor(ctx.forwarded) // client IP and request id; a public form sends no cookie
+    return submitLeadForm(parsedInput, leadFormValues(clientInput), {
+      newIdempotencyKey: () => crypto.randomUUID(),
+      send: async (body, key): Promise<CreateLeadResult> => {
+        try {
+          const { error, response } = await api.POST('/v1/leads', {
+            params: { header: { 'Idempotency-Key': `"${key}"` } }, // a Structured Field String: quoted
+            body,
+          })
+          if (error === undefined) return { kind: 'created' }
+          return {
+            kind: 'problem',
+            status: response.status,
+            problem: asProblem(error),
+            retryAfterSeconds: retryAfterSeconds(response),
+          }
+        } catch (error: unknown) {
+          console.error('createLead: Go API unreachable', error instanceof Error ? error.name : 'unknown')
+          return { kind: 'unreachable' } // timeout or network: the retry reuses the key, so no duplicate
+        }
+      },
+    })
+  })
+```
+
+## `src/features/leads/copy.ts`
+
+Russian copy keyed by problem `code`, and `leadFormView()`: what the form renders for a result.
+
+```ts
+import type { LeadFieldErrors, LeadFormState, LeadFormValues } from './form'
+
+export const PHONE_ERROR = 'Проверьте номер телефона'
+const FAILED = 'Не удалось отправить заявку. Попробуйте ещё раз: повторная отправка не создаст дубль.'
+const OUTDATED = 'Страница устарела. Обновите её и отправьте заявку ещё раз.'
+
+/** Russian copy for a problem `code` from Go (codes are listed in the contract's x-problem-codes). */
+function rejectionMessage(code: string, retryAfterSeconds?: number): string {
+  switch (code) {
+    case 'lead.rate_limited': {
+      const minutes = Math.max(1, Math.ceil((retryAfterSeconds ?? 60) / 60))
+      return `Слишком много заявок подряд. Попробуйте через ${String(minutes)} мин.`
+    }
+    case 'lead.invalid_topic':
+    case 'lead.invalid_city':
+    case 'request.invalid':
+      return OUTDATED
+    default:
+      return 'Не удалось отправить заявку. Проверьте номер и попробуйте ещё раз.'
+  }
+}
+
+export type LeadFormView = {
+  sent: boolean
+  values?: LeadFormValues
+  fieldErrors: LeadFieldErrors
+  idempotencyKey?: string
+  message?: string
+}
+
+/** What the form renders for an action result. Pure: tested without React. */
+export function leadFormView(state: LeadFormState): LeadFormView {
+  if (state.validationErrors !== undefined) {
+    const { fieldErrors, pageOutdated, values, idempotencyKey } = state.validationErrors
+    return { sent: false, values, fieldErrors, idempotencyKey, message: pageOutdated ? OUTDATED : undefined }
+  }
+  if (state.serverError !== undefined) return { sent: false, fieldErrors: {}, message: FAILED }
+  const data = state.data
+  if (data === undefined) return { sent: false, fieldErrors: {} }
+  switch (data.status) {
+    case 'sent':
+      return { sent: true, fieldErrors: {} }
+    case 'invalid':
+      return { sent: false, values: data.values, fieldErrors: data.fieldErrors, idempotencyKey: data.idempotencyKey }
+    case 'rejected':
+      return {
+        sent: false,
+        values: data.values,
+        fieldErrors: {},
+        idempotencyKey: data.idempotencyKey,
+        message: rejectionMessage(data.code, data.retryAfterSeconds),
+      }
+    case 'failed':
+      return { sent: false, values: data.values, fieldErrors: {}, idempotencyKey: data.idempotencyKey, message: FAILED }
+  }
 }
 ```
 
@@ -269,11 +341,11 @@ The form.
 'use client'
 import { useActionState, useEffect, useRef, type SubmitEvent } from 'react'
 import { submitLead } from '../actions'
-import { formMessage } from '../copy'
+import { leadFormView } from '../copy'
 import { ELAPSED_FIELD, HONEYPOT_FIELD, type LeadFormState } from '../form'
 import { rememberSubmission, restoreDraft } from './draft'
 
-const initialState: LeadFormState = { status: 'idle' }
+const initialState: LeadFormState = {}
 
 export function LeadForm({ city, topic }: { city: string; topic: string }) {
   const [state, formAction, pending] = useActionState(submitLead, initialState)
@@ -285,12 +357,9 @@ export function LeadForm({ city, topic }: { city: string; topic: string }) {
     if (formRef.current) restoreDraft(formRef.current) // after the reload for a new deployment
   }, [])
 
-  if (state.status === 'sent') return <p role="status">Заявка отправлена. Юрист свяжется с вами.</p>
-
-  const values = state.status === 'idle' ? undefined : state.values
-  const key = state.status === 'idle' ? undefined : state.idempotencyKey
-  const phoneError = state.status === 'invalid' ? state.fieldErrors.phone : undefined
-  const message = formMessage(state)
+  const view = leadFormView(state)
+  if (view.sent) return <p role="status">Заявка отправлена. Юрист свяжется с вами.</p>
+  const phoneError = view.fieldErrors.phone
 
   // Runs after hydration only, so nothing random is baked into the prerendered HTML.
   function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
@@ -308,7 +377,7 @@ export function LeadForm({ city, topic }: { city: string; topic: string }) {
     <form ref={formRef} action={formAction} onSubmit={handleSubmit}>
       <input type="hidden" name="city" value={city} />
       <input type="hidden" name="topic" value={topic} />
-      <input type="hidden" name="idempotencyKey" defaultValue={key ?? ''} />
+      <input type="hidden" name="idempotencyKey" defaultValue={view.idempotencyKey ?? ''} />
       <input type="hidden" name={ELAPSED_FIELD} defaultValue="" />
       {/* SmartCaptcha's widget adds <input type="hidden" name="smart-token"> here; the action passes it on. */}
       <div aria-hidden="true" className="absolute -left-[9999px] h-px w-px overflow-hidden">
@@ -324,7 +393,7 @@ export function LeadForm({ city, topic }: { city: string; topic: string }) {
         autoComplete="tel"
         required
         className="ym-disable-keys"
-        defaultValue={values?.phone}
+        defaultValue={view.values?.phone}
         aria-invalid={phoneError ? true : undefined}
         aria-describedby={phoneError ? 'lead-phone-error' : undefined}
       />
@@ -333,7 +402,7 @@ export function LeadForm({ city, topic }: { city: string; topic: string }) {
       <button type="submit" disabled={pending}>
         {pending ? 'Отправляем…' : 'Отправить заявку'}
       </button>
-      {message && <p role="alert">{message}</p>}
+      {view.message && <p role="alert">{view.message}</p>}
     </form>
   )
 }
@@ -341,7 +410,7 @@ export function LeadForm({ city, topic }: { city: string; topic: string }) {
 
 ## `src/features/leads/components/lead-form-boundary.tsx`
 
-Deploy skew: reload that keeps the input.
+Deploy skew: a reload that keeps the input.
 
 ```tsx
 'use client'
@@ -478,13 +547,13 @@ export function retryAfterSeconds(response: Response): number | undefined {
 
 ## `src/features/leads/schema.test.ts`
 
-Tests: parsing.
+Tests: the input schema.
 
 ```ts
 import { describe, expect, it } from 'vitest'
 import { PHONE_ERROR } from './copy'
-import { ELAPSED_FIELD, HONEYPOT_FIELD } from './form'
-import { idempotencyKeyOf, normalizePhone, parseLeadForm, spamVerdict } from './schema'
+import { HONEYPOT_FIELD } from './form'
+import { idempotencyKeyOf, LeadFormInput, normalizePhone } from './schema'
 
 const form = (fields: Record<string, string>): FormData => {
   const data = new FormData()
@@ -507,42 +576,25 @@ describe('normalizePhone', () => {
   })
 })
 
-describe('parseLeadForm', () => {
-  it('builds the request from the parsed fields and ignores React and anti-spam fields', () => {
-    const parsed = parseLeadForm(
+describe('LeadFormInput', () => {
+  it('parses FormData, normalizes the phone and ignores React and unknown fields', () => {
+    const parsed = LeadFormInput.parse(
       form({
         phone: '8 (999) 123-45-67',
         city: 'moskva',
         topic: 'razvod',
         $ACTION_ID_abc: '',
-        [HONEYPOT_FIELD]: '',
         name: 'Анна',
+        [HONEYPOT_FIELD]: '',
       }),
     )
-    expect(parsed).toEqual({ ok: true, body: { phone: '+79991234567', city: 'moskva', topic: 'razvod' } })
+    expect(parsed).toEqual({ phone: '+79991234567', city: 'moskva', topic: 'razvod', [HONEYPOT_FIELD]: '' })
   })
 
   it('reports a bad phone on the phone field', () => {
-    expect(parseLeadForm(form({ phone: '+7 999 12', city: 'moskva', topic: 'razvod' }))).toEqual({
-      ok: false,
-      fieldErrors: { phone: PHONE_ERROR },
-    })
-  })
-
-  it('reports no visible field when only the hidden city is invalid', () => {
-    expect(parseLeadForm(form({ phone: '89991234567', city: 'm', topic: 'razvod' }))).toEqual({
-      ok: false,
-      fieldErrors: {},
-    })
-  })
-})
-
-describe('spamVerdict', () => {
-  it('flags a filled honeypot and a too fast submit; without JS there is no timing', () => {
-    expect(spamVerdict(form({ [HONEYPOT_FIELD]: 'http://spam' }))).toBe('honeypot')
-    expect(spamVerdict(form({ [ELAPSED_FIELD]: '800' }))).toBe('too_fast')
-    expect(spamVerdict(form({ [ELAPSED_FIELD]: '15000' }))).toBe('ok')
-    expect(spamVerdict(form({}))).toBe('ok')
+    const result = LeadFormInput.safeParse(form({ phone: '+7 999 12', city: 'moskva', topic: 'razvod' }))
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.map((i) => [i.path.join('.'), i.message])).toEqual([['phone', PHONE_ERROR]])
   })
 })
 
@@ -566,18 +618,20 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Problem } from '@/lib/api/problem'
 import { PHONE_ERROR } from './copy'
 import { ELAPSED_FIELD, HONEYPOT_FIELD } from './form'
+import type { LeadSubmission } from './schema'
 import { submitLeadForm, type CreateLeadResult, type SubmitDeps } from './submit'
 
 const KEY = '6f1c0e5a-8d0b-4a49-9b8e-6f2d1c3a4b5c'
-
-const form = (fields: Record<string, string>): FormData => {
-  const data = new FormData()
-  for (const [k, v] of Object.entries({ city: 'moskva', topic: 'razvod', ...fields })) data.append(k, v)
-  return data
-}
+const values = { phone: '8 999 123 45 67' }
+const input = (extra: Partial<LeadSubmission> = {}): LeadSubmission => ({
+  phone: '+79991234567',
+  city: 'moskva',
+  topic: 'razvod',
+  idempotencyKey: KEY,
+  ...extra,
+})
 
 type ProblemResult = Extract<CreateLeadResult, { kind: 'problem' }>
-
 const problem = (status: number, code: string, extra: Partial<Problem> = {}): ProblemResult => ({
   kind: 'problem',
   status,
@@ -593,21 +647,10 @@ function deps(...results: CreateLeadResult[]) {
 }
 
 describe('submitLeadForm', () => {
-  it('sends the normalized phone and reports success', async () => {
+  it('sends exactly the contract fields and reports success', async () => {
     const d = deps({ kind: 'created' })
-    expect(await submitLeadForm(form({ phone: '8 999 123 45 67', idempotencyKey: KEY }), d)).toEqual({ status: 'sent' })
+    expect(await submitLeadForm(input(), values, d)).toEqual({ status: 'sent' })
     expect(d.send).toHaveBeenCalledWith({ phone: '+79991234567', city: 'moskva', topic: 'razvod' }, KEY)
-  })
-
-  it('keeps the typed phone after a local validation error and does not call Go', async () => {
-    const d = deps()
-    expect(await submitLeadForm(form({ phone: '+7 999 12', idempotencyKey: KEY }), d)).toEqual({
-      status: 'invalid',
-      values: { phone: '+7 999 12' },
-      fieldErrors: { phone: PHONE_ERROR },
-      idempotencyKey: KEY,
-    })
-    expect(d.send).not.toHaveBeenCalled()
   })
 
   it('maps Go 400 field errors and 422 lead.invalid_phone to the phone field, keeping input and key', async () => {
@@ -615,9 +658,9 @@ describe('submitLeadForm', () => {
       problem(400, 'request.invalid', { errors: [{ pointer: '#/phone', code: 'pattern' }] }),
       problem(422, 'lead.invalid_phone'),
     ]) {
-      expect(await submitLeadForm(form({ phone: '89991234567', idempotencyKey: KEY }), deps(result))).toEqual({
+      expect(await submitLeadForm(input(), values, deps(result))).toEqual({
         status: 'invalid',
-        values: { phone: '89991234567' },
+        values,
         fieldErrors: { phone: PHONE_ERROR },
         idempotencyKey: KEY,
       })
@@ -626,18 +669,14 @@ describe('submitLeadForm', () => {
 
   it('mints the key when the form has none (no JavaScript) and returns it for the retry', async () => {
     const d = deps(problem(503, 'unavailable'))
-    const state = await submitLeadForm(form({ phone: '89991234567' }), d)
-    expect(state).toEqual({
-      status: 'failed',
-      values: { phone: '89991234567' },
-      idempotencyKey: 'minted-key-0001-xxxxxxxx',
-    })
+    const state = await submitLeadForm(input({ idempotencyKey: undefined }), values, d)
+    expect(state).toEqual({ status: 'failed', values, idempotencyKey: 'minted-key-0001-xxxxxxxx' })
     expect(d.send).toHaveBeenCalledWith(expect.anything(), 'minted-key-0001-xxxxxxxx')
   })
 
   it('retries once with a new key when Go says the key was used for another body', async () => {
     const d = deps(problem(422, 'idempotency.key_reused'), { kind: 'created' })
-    expect(await submitLeadForm(form({ phone: '89991234567', idempotencyKey: KEY }), d)).toEqual({ status: 'sent' })
+    expect(await submitLeadForm(input(), values, d)).toEqual({ status: 'sent' })
     expect(d.send.mock.calls.map(([, key]) => key)).toEqual([KEY, 'minted-key-0001-xxxxxxxx'])
   })
 
@@ -649,9 +688,9 @@ describe('submitLeadForm', () => {
       retryAfterSeconds: undefined,
     }
     for (const result of [notAProblem, { kind: 'unreachable' } as const, problem(500, 'internal')]) {
-      expect(await submitLeadForm(form({ phone: '89991234567', idempotencyKey: KEY }), deps(result))).toEqual({
+      expect(await submitLeadForm(input(), values, deps(result))).toEqual({
         status: 'failed',
-        values: { phone: '89991234567' },
+        values,
         idempotencyKey: KEY,
       })
     }
@@ -659,7 +698,7 @@ describe('submitLeadForm', () => {
 
   it('passes rate limiting through with Retry-After', async () => {
     const limited: CreateLeadResult = { ...problem(429, 'lead.rate_limited'), retryAfterSeconds: 120 }
-    expect(await submitLeadForm(form({ phone: '89991234567', idempotencyKey: KEY }), deps(limited))).toMatchObject({
+    expect(await submitLeadForm(input(), values, deps(limited))).toMatchObject({
       status: 'rejected',
       code: 'lead.rate_limited',
       retryAfterSeconds: 120,
@@ -668,10 +707,8 @@ describe('submitLeadForm', () => {
 
   it('answers bots without calling Go: a filled honeypot looks sent, a too fast submit looks transient', async () => {
     const d = deps()
-    expect(await submitLeadForm(form({ phone: '89991234567', [HONEYPOT_FIELD]: 'x' }), d)).toEqual({ status: 'sent' })
-    expect(await submitLeadForm(form({ phone: '89991234567', [ELAPSED_FIELD]: '500' }), d)).toMatchObject({
-      status: 'failed',
-    })
+    expect(await submitLeadForm(input({ [HONEYPOT_FIELD]: 'x' }), values, d)).toEqual({ status: 'sent' })
+    expect(await submitLeadForm(input({ [ELAPSED_FIELD]: '500' }), values, d)).toMatchObject({ status: 'failed' })
     expect(d.send).not.toHaveBeenCalled()
   })
 })
@@ -689,6 +726,7 @@ import { resolve } from 'node:path'
 import Ajv2020 from 'ajv/dist/2020'
 import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
+import { LeadFormInput, leadFormValues } from './schema'
 import { submitLeadForm, type CreateLeadResult } from './submit'
 
 type OpenApi = { components: { schemas: Record<string, object>; parameters: Record<string, { schema: object }> } }
@@ -707,7 +745,7 @@ async function sentBy(fields: Record<string, string>): Promise<{ body: unknown; 
   const data = new FormData()
   for (const [k, v] of Object.entries(fields)) data.append(k, v)
   const calls: { body: unknown; key: string }[] = []
-  await submitLeadForm(data, {
+  await submitLeadForm(LeadFormInput.parse(data), leadFormValues(data), {
     newIdempotencyKey: () => crypto.randomUUID(),
     send: (body, key): Promise<CreateLeadResult> => {
       calls.push({ body, key: `"${key}"` }) // the header value the action builds
@@ -733,6 +771,49 @@ describe('lead form output against the contract', () => {
     expect(validateBody({ name: 'Анна', phone: '+79991234567', city: 'moskva', topic: 'razvod' })).toBe(false) // closed body
     expect(validateBody({ phone: '8 (999) 123-45-67', city: 'moskva', topic: 'razvod' })).toBe(false) // pattern
     expect(validateKey(crypto.randomUUID())).toBe(false) // unquoted key
+  })
+})
+```
+
+## `src/features/leads/copy.test.ts`
+
+Tests: what the form shows for each result.
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { leadFormView, PHONE_ERROR } from './copy'
+
+const values = { phone: '+7 999 12' }
+
+describe('leadFormView', () => {
+  it('idle and sent', () => {
+    expect(leadFormView({})).toEqual({ sent: false, fieldErrors: {} })
+    expect(leadFormView({ data: { status: 'sent' } }).sent).toBe(true)
+  })
+
+  it('a schema error brings the typed values back', () => {
+    const view = leadFormView({
+      validationErrors: { fieldErrors: { phone: PHONE_ERROR }, pageOutdated: false, values, idempotencyKey: undefined },
+    })
+    expect(view).toEqual({
+      sent: false,
+      values,
+      fieldErrors: { phone: PHONE_ERROR },
+      idempotencyKey: undefined,
+      message: undefined,
+    })
+  })
+
+  it('maps Go problems to copy and keeps the key', () => {
+    const view = leadFormView({
+      data: { status: 'rejected', values, code: 'lead.rate_limited', retryAfterSeconds: 120, idempotencyKey: 'k' },
+    })
+    expect(view.message).toBe('Слишком много заявок подряд. Попробуйте через 2 мин.')
+    expect(view.idempotencyKey).toBe('k')
+  })
+
+  it('an unexpected server error shows the generic message', () => {
+    expect(leadFormView({ serverError: 'x' }).message).toMatch(/Не удалось отправить заявку/)
   })
 })
 ```
@@ -792,9 +873,11 @@ describe('React 19 form reset', () => {
 describe('LeadForm', () => {
   it('keeps what the visitor typed after an error and marks the field', async () => {
     submitLead.mockResolvedValueOnce({
-      status: 'invalid',
-      values: { phone: '+7 999 12' },
-      fieldErrors: { phone: 'Проверьте номер телефона' },
+      validationErrors: {
+        fieldErrors: { phone: 'Проверьте номер телефона' },
+        pageOutdated: false,
+        values: { phone: '+7 999 12' },
+      },
     })
     render(<LeadForm city="moskva" topic="razvod" />)
     type('+7 999 12')
@@ -807,9 +890,11 @@ describe('LeadForm', () => {
   it('mints the Idempotency-Key at the first submit, not in the markup, and reuses it for the retry', async () => {
     submitLead.mockImplementation((_prev, data) =>
       Promise.resolve({
-        status: 'failed',
-        values: { phone: text(data.get('phone')) },
-        idempotencyKey: text(data.get('idempotencyKey')),
+        data: {
+          status: 'failed',
+          values: { phone: text(data.get('phone')) },
+          idempotencyKey: text(data.get('idempotencyKey')),
+        },
       }),
     )
     const { container } = render(<LeadForm city="moskva" topic="razvod" />)
@@ -844,6 +929,48 @@ describe('LeadForm', () => {
     await waitFor(() => {
       expect(phoneInput()).toHaveProperty('value', '+7 999 123-45-67')
     })
+    consoleError.mockRestore()
+  })
+})
+```
+
+## `src/lib/api/action-client.test.ts`
+
+Tests: headers forwarded by the action clients; no exception text to the browser.
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('server-only', () => ({})) // the real module throws outside the React server environment
+vi.mock('next/headers', () => ({
+  headers: () =>
+    Promise.resolve(
+      new Headers({
+        cookie: '_ym_uid=1; __Host-session=ab+/c==; theme=dark',
+        'x-forwarded-for': '203.0.113.7',
+        'x-request-id': 'req-42',
+        traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+      }),
+    ),
+}))
+
+const { actionClient, sessionActionClient } = await import('./action-client')
+
+describe('action clients', () => {
+  it('a public action forwards client IP and request id, but no cookie (traceparent comes from OpenTelemetry)', async () => {
+    const probe = actionClient.action(({ ctx }) => Promise.resolve(ctx.forwarded))
+    expect((await probe()).data).toEqual({ 'x-forwarded-for': '203.0.113.7', 'x-request-id': 'req-42' })
+  })
+
+  it('a cabinet action also forwards the session cookie byte for byte', async () => {
+    const probe = sessionActionClient.action(({ ctx }) => Promise.resolve(ctx.forwarded))
+    expect((await probe()).data).toMatchObject({ cookie: '__Host-session=ab+/c==', 'x-forwarded-for': '203.0.113.7' })
+  })
+
+  it('never sends an exception text to the browser', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const failing = actionClient.action(() => Promise.reject(new Error('pg: connection refused at 10.0.0.5')))
+    expect((await failing()).serverError).toBe('Не удалось выполнить действие. Попробуйте ещё раз.')
     consoleError.mockRestore()
   })
 })

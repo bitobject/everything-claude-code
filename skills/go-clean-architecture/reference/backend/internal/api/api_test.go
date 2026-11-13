@@ -3,14 +3,17 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"example.com/app/internal/api"
 	"example.com/app/internal/api/apitest"
 	"example.com/app/internal/gen/openapi"
 	"example.com/app/internal/platform/httpserver"
+	"example.com/app/internal/platform/telemetry/telemetrytest"
 )
 
 // unreachable fails the test if a request gets past the validator.
@@ -110,6 +113,44 @@ func TestRejectedRequestsAreProblems(t *testing.T) {
 			}
 			if tt.wantAllow != "" && rec.Header().Get("Allow") != tt.wantAllow {
 				t.Errorf("Allow = %q, want %q", rec.Header().Get("Allow"), tt.wantAllow)
+			}
+		})
+	}
+}
+
+// Spans and request metrics are named by the operation's template whichever layer answers: the
+// validator (400, 401) or the generated binding inside the mux. A request for no operation is
+// named by its method alone, so scanners can't add series.
+func TestSpansAreNamedByOperation(t *testing.T) {
+	tests := []struct {
+		name, method, path, body string
+		session                  bool
+		want                     string
+	}{
+		{name: "no such operation", method: http.MethodGet, path: "/v1/nope/019a7a3e-0000-7000-8000-000000000001", want: "GET"},
+		{name: "rejected by the validator", method: http.MethodPost, path: "/v1/leads", body: `{"phone":`, want: "POST /v1/leads"},
+		{name: "no session", method: http.MethodGet, path: "/v1/leads/019a7a3e-0000-7000-8000-000000000001", want: "GET /v1/leads/{leadId}"},
+		{name: "rejected by the binding", method: http.MethodGet, path: "/v1/leads/not-a-uuid", session: true, want: "GET /v1/leads/{leadId}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := telemetrytest.Install(t)
+			v1, err := api.New(unreachable{t}, slog.New(slog.DiscardHandler))
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := httpserver.Observe(httpserver.Chain(v1, httpserver.RequestID), "api:8080", httpserver.ClientIP{})
+
+			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", validKey)
+			if tt.session {
+				req.AddCookie(&http.Cookie{Name: api.SessionCookie, Value: "s"})
+			}
+			h.ServeHTTP(httptest.NewRecorder(), req)
+
+			if spans := rec.Spans(); len(spans) != 1 || spans[0].Name() != tt.want {
+				t.Errorf("spans = %v, want one named %q", telemetrytest.Names(spans), tt.want)
 			}
 		})
 	}

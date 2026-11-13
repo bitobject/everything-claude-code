@@ -149,12 +149,13 @@ test first from the user's (or the contract's) point of view, as on the Go side.
 |---|---|---|
 | Pure logic: form parsing, problem mapping, submit flows, URL builders | Vitest | modules without Next imports; inject I/O (`send`) and pass fakes |
 | What a form sends | Vitest + Ajv (JSON Schema 2020-12) | the schema comes from `api/openapi.yaml` itself (below) |
+| Server Actions: the action clients, safe actions | Vitest, calling the action directly | `vi.mock('server-only', () => ({}))` + a mock of `next/headers`; assert `data`/`validationErrors`/`serverError` and what goes to Go (`src/lib/api/action-client.test.ts`); the flow itself stays in `submit.ts` with a fake `send` |
 | Client Components, hooks | Vitest 5 + Testing Library | query by role and label; assert values and visible text, not component state |
 | Cabinet components with data | Vitest + MSW 3 + openapi-msw | handlers typed from `paths` (below) |
 | `proxy.ts` | Vitest + `next/experimental/testing/server` | `unstable_doesMiddlewareMatch` for the matcher, `getRedirectUrl` for the decisions |
 | Synchronous views | Vitest | async Server Components stay thin containers that pass props to a view; cover them with Playwright |
-| SEO output (metadata, canonical, JSON-LD, sitemap) | Vitest on the functions; Playwright on the raw HTML | indexable pages must have full content in the first response |
-| Journeys (submit a lead, cabinet flows), accessibility | Playwright 1.65 + axe (`wcag22aa`) | real Go backend; `e2e-runner` agent (`/ecc:e2e`); lead forms also with JavaScript disabled |
+| SEO output (metadata, canonical, JSON-LD, sitemap) | Vitest on the functions; Playwright on the raw HTML | requests (no browser) under the YandexBot and Googlebot user agents: main content inside `<main>`, no `<template id="B:`/`<div hidden id="S:` placeholders (`e2e/seo.spec.ts`) |
+| Journeys (submit a lead, each cabinet with its role's session), accessibility | Playwright 1.65 + axe (`wcag22aa`) | real Go backend; `e2e-runner` agent (`/ecc:e2e`); lead forms also with JavaScript disabled |
 
 ```ts
 // web/vitest.config.mts
@@ -207,9 +208,14 @@ beforeAll(() => {
 Gotchas (each one cost a failing run):
 - **React 19 resets uncontrolled fields after every form action**, also one that returns an error. A test for "keeps
   the input" submits with a mocked action that returns an error state and asserts the input's `value`; it fails
-  without `defaultValue={state.values…}`.
-- A `'use server'` module imports `server-only`, which throws outside the server: mock it with
-  `vi.mock('../actions', () => ({ submitLead }))` and create the mock with `vi.hoisted`.
+  without `defaultValue` from the returned values.
+- A `'use server'` module imports `server-only`, which throws outside the server: in component tests mock it with
+  `vi.mock('../actions', () => ({ submitLead }))` and create the mock with `vi.hoisted`. To test an action client or
+  a safe action, mock `server-only` and `next/headers` instead and import the module after the mocks
+  (`await import('./action-client')`).
+- `useActionState(submitLead, …)` fails `tsc` (TS2769) when `handleValidationErrorsShape` has no return type
+  annotation: the inferred literal type makes the action's result differ from the state type. Annotate it
+  (`Promise<LeadValidationErrors>`).
 - openapi-fetch keeps the `fetch` it was created with. A client built at module load, before `server.listen()`
   installs MSW, bypasses the mocks: in tests create it with `fetch: (request) => fetch(request)`. Under Node a
   relative base URL (`/api`) also needs an origin, so tests mock `@/lib/api/browser` with an absolute one.

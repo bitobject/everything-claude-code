@@ -64,7 +64,7 @@ func New(si openapi.StrictServerInterface, log *slog.Logger) (http.Handler, erro
 		BaseRouter:       http.NewServeMux(),
 		ErrorHandlerFunc: badRequest,
 	})
-	return validate(routes), nil
+	return validate(httpserver.Route(routes)), nil // Route: spans and metrics named by the matched operation
 }
 
 // requireSessionCookie makes the contract's security declaration enforceable: an operation that
@@ -95,6 +95,7 @@ func writeRequestProblem(w http.ResponseWriter, r *http.Request, err error, opts
 		httpserver.WriteProblem(w, r, httpserver.NewProblem(http.StatusNotFound, "request.not_found", "no such API operation"))
 		return
 	}
+	httpserver.LabelRoute(r, opts.MatchedRoute.Route.Path) // the contract's template, as Route would
 	v := classify(err, r, opts.MatchedRoute.Route)
 	switch {
 	case v.unknown != nil:

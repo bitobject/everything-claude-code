@@ -31,7 +31,10 @@ YandexBot a request-time render of the server HTML. Yandex decides by itself whe
   `<head>`. Content is identical; the render path differs. Every data source used at build must also be reachable at
   request time, or YandexBot gets a 500 while users see the page.
 - Never put the H1, main text, FAQ, breadcrumbs or JSON-LD inside a client-only component, a `loading.tsx` boundary,
-  `next/dynamic` with `ssr: false` or a Suspense boundary over uncached data.
+  `next/dynamic` with `ssr: false` or any `<Suspense>` boundary. Crawlers get a request-time render, and there a
+  boundary sends its fallback first and the content later in a hidden streamed segment (`<div hidden id="S:…">`),
+  even when the data is cached: verified with the YandexBot user agent. Suspense only around secondary parts, if
+  at all.
 - Do not override `htmlLimitedBots`; the default list includes Yandex.
 - Verify the raw HTML the way Yandex sees it:
 
@@ -39,9 +42,14 @@ YandexBot a request-time render of the server HTML. Yandex decides by itself whe
 curl -sS -A 'Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)' \
   -o page.html -w '%{http_code}\n' https://example.ru/moskva/razvod
 grep -c '<h1' page.html; grep -o '<link rel="canonical"[^>]*>' page.html; grep -c 'application/ld+json' page.html
+grep -c '<div hidden id="S:' page.html   # streamed segments: expect 0
+grep -c '<template id="B:' page.html      # Suspense fallbacks: 0, or 1 from the analytics counter (outside <main>)
 ```
 
-Then use Yandex.Webmaster "Проверка ответа сервера" and Google "URL Inspection" for the same URL.
+Do the same with the Googlebot user agent (`Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)`):
+Googlebot gets the prerendered page, YandexBot the request-time render, and both must be complete. The e2e suite
+checks both (`e2e-runner`). Then use Yandex.Webmaster "Проверка ответа сервера" and Google "URL Inspection" for the
+same URL.
 
 ## URLs and canonicals
 
@@ -86,8 +94,8 @@ export const metadata: Metadata = {
   metadata and content come from one fetch and both are static.
 - Title: unique per URL, primary phrase first, city in the title for local pages, about 60 characters.
   Description: unique, honest, about 120–160 characters. One `<h1>` per page that matches the title's intent.
-- Non-indexable pages: `robots: { index: false, follow: true }` and absent from sitemaps. The cabinet layout:
-  `robots: { index: false, follow: false }`.
+- Non-indexable pages: `robots: { index: false, follow: true }` and absent from sitemaps. The cabinets' layout
+  (`(private)/layout.tsx`, over `/account`, `/cabinet`, `/admin`): `robots: { index: false, follow: false }`.
 - File-based metadata (`opengraph-image.tsx`, `icon.png`) overrides the `metadata` object; use one or the other per field.
 
 ## Programmatic pages (city × legal topic)
@@ -163,7 +171,7 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
     rules: {
       userAgent: '*',
       allow: '/',
-      disallow: ['/cabinet/', '/login', '/api/', '/internal/'],
+      disallow: ['/account/', '/cabinet/', '/admin/', '/login', '/api/', '/internal/'],
       other: { 'Clean-param': TRACKING_PARAMS.join('&') }, // Yandex; Google ignores unknown lines
     },
     sitemap: [
@@ -258,7 +266,7 @@ export function landingGraph(l: Landing, site: string): Graph {
 ## Pagination
 
 - Path segments (`/moskva/advokaty/stranica-2`), so each page is static; `?page=2` is request data. Numbered pages
-  need a stable page-number endpoint in the API for public listings (cursor pagination stays for the cabinet).
+  need a stable page-number endpoint in the API for public listings (cursor pagination stays for the cabinets).
 - Every page is self-canonical (Google: don't use the first page as the canonical of the series) with a unique
   title («… — страница 2»).
 - Link pages with plain `<a href>` (previous, next, numbers). `pagination: { previous, next }` in metadata renders
@@ -379,9 +387,9 @@ export default function PublicLayout({ children }: LayoutProps<'/'>) {
 }
 ```
 
-- **Public pages only.** The root layout also wraps the cabinet, where clients' phone numbers are in the DOM and a
-  third-party script could call `/api` with the lawyer's cookie. Render the counter from `(public)/layout.tsx`, never
-  from `app/layout.tsx`.
+- **Public pages only.** The root layout also wraps the cabinets (`/account`, `/cabinet`, `/admin`), where phone
+  numbers are in the DOM and a third-party script could call `/api` with the user's cookie. Render the counter from
+  `(public)/layout.tsx`, never from `app/layout.tsx`.
 - **Counter settings** (Метрика → Настройка): keep «Использовать дополнительные настройки отслеживания» off (it sends
   contact details typed into forms to Metrica, hashed, for ad algorithms), and with it «Запоминать маскированные
   данные». On the Вебвизор tab keep «Записывать все поля» off, so field contents are recorded as asterisks.
@@ -396,7 +404,8 @@ export default function PublicLayout({ children }: LayoutProps<'/'>) {
 
 ## Review checklist
 
-- [ ] Raw HTML (Yandex UA) has status 200, `<title>`, canonical, one `<h1>`, main text, JSON-LD
+- [ ] Raw HTML (YandexBot and Googlebot UA) has status 200, `<title>`, canonical, one `<h1>`, main text, JSON-LD, and no
+  streaming placeholders; no `<Suspense>` around the main content
 - [ ] `ensureStatic = 'navigation'`, cached data only, no request data in `(public)` layouts
 - [ ] Canonical built by `lib/routes.ts`, absolute, self-referencing, parameter-free
 - [ ] `indexable` from Go drives `robots`, sitemap membership and hub links together

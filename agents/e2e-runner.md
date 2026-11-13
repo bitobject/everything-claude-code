@@ -1,6 +1,6 @@
 ---
 name: e2e-runner
-description: Writes, runs and stabilizes Playwright 1.65 end-to-end tests for web/ against a production build of Next.js and the real Go backend, with axe accessibility checks and a server-HTML SEO smoke test. Creates test data through the Go API, never the database. Use PROACTIVELY for new or changed user journeys (lead forms, cabinet), before releases, and when E2E tests are flaky; invoked by /ecc:e2e.
+description: Writes, runs and stabilizes Playwright 1.65 end-to-end tests for web/ against a production build of Next.js and the real Go backend, with axe accessibility checks and a server-HTML SEO smoke test. Creates test data through the Go API, never the database. Use PROACTIVELY for new or changed user journeys (lead forms, the three cabinets), before releases, and when E2E tests are flaky; invoked by /ecc:e2e.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: opus
 ---
@@ -26,7 +26,8 @@ E2E covers what only the assembled system can show. Versions: Playwright 1.65, `
 - **Assert outcomes.** Every journey ends by checking what the user sees and, when the UI cannot prove it, what the
   API now returns.
 - **Accessibility and HTML are part of done.** axe scans key pages for WCAG 2.0–2.2 A/AA violations (the `wcag22aa`
-  tag adds `target-size`); SEO routes get a raw-HTML check with the Yandex user agent.
+  tag adds `target-size`); SEO routes get a raw-HTML check with the YandexBot and Googlebot user agents (Next renders
+  YandexBot at request time and serves Googlebot the prerendered page).
 - **Specs compile.** `next build` type-checks the whole tsconfig project, `e2e/` included, so a spec with a type error
   breaks the build. `eslint.config.mjs` turns `react-hooks/rules-of-hooks` off for `e2e/**`: Playwright fixtures
   receive a function named `use`.
@@ -37,7 +38,8 @@ The build prerenders pages by calling the Go API, so the API must be up before `
 
 1. Start PostgreSQL and the Go API (the backend's compose file or `go run ./cmd/api`), run migrations, seed reference
    data (cities, topics, test accounts) through the API.
-2. `pnpm build` in `web/` with `API_INTERNAL_URL` pointing at that API and no analytics counter id.
+2. `pnpm build` in `web/` with `API_INTERNAL_URL` pointing at that API and no analytics counter id (the SEO spec's
+   placeholder check needs that, below).
 3. `pnpm exec playwright test`; `webServer` only starts `pnpm start`.
 
 Locally, `reuseExistingServer` reuses a running `pnpm start`; keep the Go API running yourself.
@@ -79,15 +81,12 @@ export default defineConfig({
 
 ```ts
 // web/e2e/fixtures.ts
-import { test as base, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { test as base, expect } from '@playwright/test'
 import createClient, { type Client } from 'openapi-fetch'
 import type { paths } from '../src/lib/api/schema'
 
-type Fixtures = {
-  api: Client<paths>
-  makeAxeBuilder: () => AxeBuilder
-}
+type Fixtures = { api: Client<paths>; makeAxeBuilder: () => AxeBuilder }
 
 export const test = base.extend<Fixtures>({
   api: async ({}, use) => {
@@ -101,14 +100,18 @@ export const test = base.extend<Fixtures>({
 export { expect }
 ```
 
-Cabinet specs need a session: `web/e2e/auth.setup.ts` (a `setup` project the cabinet projects depend on) obtains a
-`__Host-session` cookie for a seeded test lawyer through the API, once per run, and saves it with
-`request.storageState({ path: 'playwright/.auth/lawyer.json' })`. Lawyers log in by email, Yandex ID, VK ID or phone
-number; the flow (code or password, account linking) is not decided yet, so use whatever the contract defines for
-tests and ask when it defines nothing. Never drive the Yandex ID or VK ID pages from a test.
+There are three cabinets, one per role: `/account` (clients), `/cabinet` (lawyers), `/admin` (staff). Cabinet specs
+need a session for their role: `web/e2e/auth.setup.ts` (a `setup` project the cabinet projects depend on) obtains a
+`__Host-session` cookie for a seeded test client, lawyer and staff member through the API, once per run, and saves
+each with `request.storageState({ path: 'playwright/.auth/<role>.json' })` (`client.json`, `lawyer.json`,
+`staff.json`). Login is Go's: email with a one-time code or link (no passwords), Yandex ID, VK ID, a phone code. Get
+the session the way the contract defines for tests and ask when it defines nothing; never drive the Yandex ID or VK ID
+pages, a real mailbox or a real phone from a test.
 
-Cabinet specs opt in with `test.use({ storageState: 'playwright/.auth/lawyer.json' })`; public specs stay anonymous.
-Tests that change a lawyer's server-side state use one account per worker. Add `playwright/.auth/` to `.gitignore`.
+Cabinet specs opt in with `test.use({ storageState: 'playwright/.auth/lawyer.json' })` (or the client's or staff
+member's file); public specs stay anonymous. Tests that change server-side state use one account per worker. Add
+`playwright/.auth/` to `.gitignore`. Without a cookie, every cabinet path redirects (307) to `/login?next=…`; a
+session of another role gets Go's 403/404 on every data call, never the data: cover both for each cabinet.
 
 ## Journeys
 
@@ -144,33 +147,56 @@ Assert values, not only visibility: a test named "without losing input" that nev
 the form wipes the field. After a lead is created, check it through the `api` fixture when the UI cannot prove it.
 
 ```ts
-// web/e2e/seo.spec.ts: what crawlers receive, no browser involved
-import { test, expect } from './fixtures'
+// web/e2e/seo.spec.ts
+// What crawlers receive. No browser: plain requests with the crawlers' user agents. Next renders HTML-limited bots
+// (YandexBot) at request time and serves Googlebot the prerendered page, so both paths are checked.
+import { expect, test } from './fixtures'
 
-const YANDEX_UA = 'Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)'
+const CRAWLERS = {
+  YandexBot: 'Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)',
+  Googlebot: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+}
 
-test('landing serves complete HTML to YandexBot', async ({ request }) => {
-  const res = await request.get('/moskva/razvod', { headers: { 'user-agent': YANDEX_UA } })
-  expect(res.status()).toBe(200)
-  const html = await res.text()
-  expect(html).toMatch(/<title>[^<]+<\/title>/)
-  expect(html).toContain('<link rel="canonical" href="')
-  expect(html).toMatch(/<h1[^>]*>/)
-  expect(html).toContain('application/ld+json')
-  expect(html).not.toMatch(/<meta name="robots" content="[^"]*noindex/)
-  expect(html).toMatch(/<img[^>]*loading="eager"/) // the LCP image is not lazy
-})
+for (const [crawler, userAgent] of Object.entries(CRAWLERS)) {
+  test.describe(crawler, () => {
+    test('gets the landing complete in the server HTML', async ({ request, api }) => {
+      const { data: landing } = await api.GET('/v1/landings/{city}/{topic}', {
+        params: { path: { city: 'moskva', topic: 'razvod' } },
+      })
+      if (landing === undefined) throw new Error('seed the moskva/razvod landing through the API first')
 
-test('unknown and malformed slugs are real 404s', async ({ request }) => {
-  expect((await request.get('/moskva/net-takoy-temy')).status()).toBe(404)
-  expect((await request.get('/moskva/raz_vod')).status()).toBe(404) // stopped in proxy.ts
-})
+      const res = await request.get('/moskva/razvod', { headers: { 'user-agent': userAgent } })
+      expect(res.status()).toBe(200)
+      const html = await res.text()
+      const main = /<main[^>]*>([\s\S]*?)<\/main>/.exec(html)?.[1] ?? ''
+      expect(main).toContain(`>${landing.h1}</h1>`)
+      expect(main).toContain(landing.description)
+      // Streaming placeholders: a Suspense fallback (<template id="B:…">) or content in a hidden segment.
+      expect(html).not.toContain('<template id="B:')
+      expect(html).not.toContain('<div hidden id="S:')
+      expect(html).toMatch(/<img[^>]*loading="eager"/) // the LCP image is not lazy
+    })
+
+    test('gets a real 404 for unknown and malformed slugs', async ({ request }) => {
+      const headers = { 'user-agent': userAgent }
+      expect((await request.get('/moskva/net-takoy-temy', { headers })).status()).toBe(404)
+      expect((await request.get('/moskva/raz_vod', { headers })).status()).toBe(404) // stopped in proxy.ts
+    })
+  })
+}
 ```
 
+The SEO spec reads the landing through the `api` fixture and checks, under both crawler user agents, that its H1 and
+description are inside `<main>` of the server HTML and that no streaming placeholder (`<template id="B:`,
+`<div hidden id="S:`) is in the page. It needs a build without analytics counter ids: the Metrica component's own
+`<Suspense fallback={null}>` leaves one `<template id="B:` (outside `<main>`) when a counter id is set. Title,
+canonical and JSON-LD in the raw HTML: the `seo` skill's curl checks and `seo-specialist`.
+
 Priorities when choosing journeys: lead submission from a landing (with and without JavaScript via
-`test.use({ javaScriptEnabled: false })`), cabinet login and lead handling, SEO HTML of each route type, 404s and
-redirects, then everything else. Set up cabinet state (a lead assigned to the test lawyer) with the `api` fixture before
-opening the page, then assert both the UI and a follow-up `api.GET`.
+`test.use({ javaScriptEnabled: false })`), each cabinet with its role's session (and the redirect without one) and
+lead handling, SEO HTML of each route type under YandexBot and Googlebot, 404s and redirects, then everything else.
+Set up cabinet state (a lead assigned to the test lawyer) with the `api` fixture before opening the page, then assert
+both the UI and a follow-up `api.GET`.
 
 ## Flakiness
 

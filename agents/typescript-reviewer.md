@@ -36,12 +36,16 @@ You report findings. You do not refactor or edit files.
   in a `NEXT_PUBLIC_*` variable (they are inlined into JS at build).
 - **Next.js doing the backend's job.** A database driver, ORM or SQL in `web/`; business rules (prices, permissions,
   eligibility, indexability thresholds) computed in TypeScript instead of returned by Go.
-- **Server Action trusting the client.** No zod validation of `FormData`/arguments; user id, ownership or role taken
-  from the form; session cookie not forwarded so Go cannot authorize; raw API objects returned to the client.
+- **Server Action trusting the client.** An action not built with `actionClient`/`sessionActionClient`
+  (`lib/api/action-client.ts`, next-safe-action) or without an input schema; user id, ownership or role taken from
+  the form; a cabinet action on `actionClient`, so Go gets no session cookie; raw API objects or exception text
+  returned to the client.
 - **Session cookie re-encoded.** `(await cookies()).toString()` or `cookies().get()` values forwarded to Go: Next
   decodes and re-encodes them, so a token with `+ / =` fails. Forward `sessionHeaders()` (the raw header).
 - **Third-party script where personal data is shown.** Analytics or any external script rendered by `app/layout.tsx`
-  or a cabinet layout instead of `app/(public)/layout.tsx`.
+  or under `app/(private)/` (the `/account`, `/cabinet`, `/admin` cabinets) instead of `app/(public)/layout.tsx`.
+- **Personal data in telemetry.** Custom spans or attributes with input values (phone, name, question text); a
+  `propagateContextUrls` that matches third parties; the query-string processor removed from `instrumentation.ts`.
 - **Per-user data in a shared cache.** `'use cache'` output that depends on the session but whose key does not; any
   cookie-derived value cached without the user in the key.
 - **XSS and redirects.** `dangerouslySetInnerHTML` with anything but the escaped `JsonLd` helper; user-supplied URLs in
@@ -66,8 +70,11 @@ You report findings. You do not refactor or edit files.
 - Hand-written types mirroring API payloads; API path strings cast to make them compile; zod schemas duplicating
   response DTOs; a request body built by spreading `parsed.data` or containing a field the contract lacks (closed
   bodies answer 400) instead of an object literal of parsed fields.
-- A Server Action form whose error states don't return the submitted `values`, or inputs without
-  `defaultValue={state.values…}`: React resets the form after every action, so the visitor loses the input.
+- A Server Action form whose validation errors (`handleValidationErrorsShape`) or error `data` don't return the
+  submitted `values`, or inputs without `defaultValue`: React resets the form after every action, so the visitor
+  loses the input.
+- A public form's action wrapped on the client (`useStateAction`, a closure around the action) instead of passing the
+  `stateAction` straight to `useActionState`: the form stops working before hydration and without JavaScript.
 - An `Idempotency-Key` (or `Date.now()`, `Math.random()`, `crypto.randomUUID()`) produced during render of a
   prerendered page; a new key on a retry of an unchanged submission; error bodies read without `asProblem()`.
 - The public lead form without the deploy-skew boundary (`catchError` + `unstable_isUnrecognizedActionError`).
@@ -82,8 +89,9 @@ You report findings. You do not refactor or edit files.
 
 - Route or a parent layout reads request data or uncached data; `ensureStatic = 'navigation'` missing on a
   programmatic route; data function not `'use cache'`d.
-- H1, main text, FAQ, breadcrumbs or JSON-LD rendered only on the client, behind `loading.tsx`, `ssr: false` or a
-  Suspense boundary over uncached data.
+- H1, main text, FAQ, breadcrumbs, JSON-LD or the lead form rendered only on the client, behind `loading.tsx`,
+  `ssr: false` or inside any `<Suspense>`: crawlers get a request-time render where the boundary's content arrives
+  as a hidden streamed segment after the fallback. Suspense only around secondary parts.
 - `notFound()` or `redirect()` called after streaming starts (soft 404 with status 200; meta-refresh redirect).
 - Missing or duplicated `title`/`description`; canonical missing, carrying query parameters, or built by string
   concatenation instead of `lib/routes.ts`; `indexable: false` from Go not mapped to `robots: { index: false }`.
@@ -146,7 +154,8 @@ For a full SEO audit delegate to the `seo-specialist` agent.
   `'use cache'` at the top of a data module.
 - `<script type="application/ld+json">` rendered by the `JsonLd` helper with `<` escaped.
 - `` `/${city}/${topic}` as Route `` inside `lib/routes.ts`; `void queryClient.query(...).catch(noop)` in a server
-  prefetch; `rules-of-hooks` off for `e2e/` (Playwright's `use`); the Label override for `components/ui/label.tsx`.
+  prefetch; `rules-of-hooks` off for `e2e/` (Playwright's `use`); the Label override for `components/ui/label.tsx`;
+  the span processor in `instrumentation.ts` that rewrites URL attributes.
 - pnpm's peer warning that openapi-typescript wants `typescript ^5.x`: expected with the pinned 6.0.3.
 - Anything Prettier, ESLint or knip already enforce.
 
