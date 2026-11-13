@@ -5,8 +5,8 @@ description: Strict Clean Architecture for the Go backend with layers inside eac
 
 # Go Clean Architecture (layers inside modules)
 
-Decisions and versions: `STACK.md` at the plugin root. Working code for everything below:
-`reference/` next to this file: two modules (`leads`, full profile; `notifications`, thin) that
+Decisions and versions: `${CLAUDE_PLUGIN_ROOT}/STACK.md`. Working code for everything below:
+`${CLAUDE_SKILL_DIR}/reference/`, next to this file: two modules (`leads`, full profile; `notifications`, thin) that
 compile and pass `make ci` on PostgreSQL. Read it before inventing a shape; each module's
 `CLAUDE.md` there shows the module template filled in.
 

@@ -1,6 +1,6 @@
 ---
 name: setup-project
-description: Install this plugin's rules, the CLAUDE.md templates (project root and one per backend module) and the starting documents (plan and ADR templates, an architecture starting point) into the current project, so they load automatically and are versioned with the code. Run once per repository, and again after the plugin's rules or templates change.
+description: Install this plugin's rules, the CLAUDE.md templates (project root and one per backend module) and the starting documents (plan and ADR templates, an architecture starting point) into the current project, and mark it with .claude/ecc.json so the plugin's hook tells sessions and subagents where the stack defaults, the reference app and the skills are; all of it loads automatically and is versioned with the code. Run once per repository, and again after the plugin's rules or templates change.
 disable-model-invocation: true
 argument-hint: "[project | user]"
 ---
@@ -18,15 +18,16 @@ Target: $ARGUMENTS (if empty: `project`)
 - `user` → the rules into `$CLAUDE_CONFIG_DIR/rules/` (or `~/.claude/rules/`): only this user,
   every project.
 
-The CLAUDE.md files and the documents always belong to the current repository, whatever the target.
+The CLAUDE.md files, the documents and the `.claude/ecc.json` marker always belong to the current
+repository, whatever the target.
 
 Never overwrite silently: when a target file exists and differs, show the diff and ask whether to
 replace, merge or keep it.
 
 Steps:
 1. Find the repository root (`git rev-parse --show-toplevel`; if not a git repo, the current
-   directory) and list what already exists: the target `rules/` directory, `CLAUDE.md`, `docs/`
-   and `backend/internal/*/CLAUDE.md`.
+   directory) and list what already exists: the target `rules/` directory, `CLAUDE.md`, `docs/`,
+   `backend/internal/*/CLAUDE.md` and `.claude/ecc.json`.
 2. Rules: for each plugin rule (`workflow.md`, `go.md`, `sql.md`, `openapi.md`, `typescript.md`),
    copy it if the target file doesn't exist, otherwise compare as above. Adjust `paths:` globs if
    the project's layout differs from `backend/`, `web/`, `api/`.
@@ -43,7 +44,7 @@ Steps:
      `docs/plans/<slug>.md`.
    - `adr/TEMPLATE.md` (MADR 4.0) and `adr/0000-record-architecture-decisions.md`. In ADR 0000 set
      `date` to today and `decision-makers` to the owner: it records that this project's accepted
-     ADRs win over the plugin's `STACK.md`.
+     ADRs win over the plugin's `${CLAUDE_PLUGIN_ROOT}/STACK.md`.
    - `architecture/`: `README.md`, `subdomains.md`, `context-map.md`, `c4.md`, `glossary.md`. They
      are a starting point pre-filled with what the plugin knows. Replace `<product>`, then go
      through each item marked *proposed* and each open question with the user (AskUserQuestion,
@@ -61,5 +62,12 @@ Steps:
    targets, `tools/tools.lock`, `scripts/` (installing and checking the pinned tools) and the
    `.gitignore` line for `backend/bin/` from `../go-clean-architecture/reference/`. Before copying
    `tools.lock`, check for newer releases under its 14-day policy.
-7. Report what was copied, skipped or left for the user to decide, including the open questions
-   that remain in `docs/architecture/`.
+7. Marker: write `<repo root>/.claude/ecc.json` as
+   `{"plugin": "ecc", "version": "<version from ../../.claude-plugin/plugin.json>"}`, whatever the
+   target; if it exists, update only `version`. With the marker, the plugin's SessionStart and
+   SubagentStart hook gives the main session and every subagent one line with the paths of
+   `${CLAUDE_PLUGIN_ROOT}/STACK.md`, the reference app and the skills; without it the hook stays silent. The built-in
+   Explore and Plan agents need that line most: they get no `CLAUDE.md` and no rules. Commit the
+   marker with the rules.
+8. Report what was copied, skipped or left for the user to decide, whether the marker was created
+   or updated, and the open questions that remain in `docs/architecture/`.

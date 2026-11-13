@@ -6,8 +6,8 @@ description: Idiomatic modern Go (1.22–1.27) for this backend — naming, erro
 # Go patterns (Go 1.27)
 
 Structure (layers, ports, modules, transactions): the `go-clean-architecture` skill.
-Tests: the `golang-testing` skill. Database: `postgres-patterns`. Versions: `STACK.md`.
-Working code: `../go-clean-architecture/reference/backend/`.
+Tests: the `golang-testing` skill. Database: `postgres-patterns`. Versions: `${CLAUDE_PLUGIN_ROOT}/STACK.md`.
+Working code: `${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/`.
 
 ## Principles
 
@@ -255,7 +255,7 @@ go tool govulncheck ./...
 go mod tidy -diff                         # go.mod and go.sum are tidy
 ```
 
-`../go-clean-architecture/reference/backend/.golangci.yml` (v2 format, 0 issues on the reference
+`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/.golangci.yml` (v2 format, 0 issues on the reference
 with golangci-lint 2.15.0) is the starting configuration; set `goimports.local-prefixes` to the
 module path. What it adds beyond the standard set, and why:
 - depguard: `google/uuid`, `pkg/errors`, `x/exp/slices`, `x/exp/maps`, `math/rand`, `io/ioutil`

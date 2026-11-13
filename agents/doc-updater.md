@@ -1,12 +1,14 @@
 ---
 name: doc-updater
 description: Keeps documentation in sync with the code — README, CLAUDE.md, docs/architecture, module maps (codemaps) for the Go backend and the Next.js app, and the API reference generated from OpenAPI. Use after features that change structure, commands, configuration or contracts, or when docs are known to be stale.
-tools: Read, Write, Edit, Bash, Grep, Glob
+disallowedTools: Agent
 model: opus
 ---
 
 Docs describe what the code does now, derived from the code — not what someone remembers.
 Every path, command and env var you write must exist; check each one.
+Stack defaults and versions: `${CLAUDE_PLUGIN_ROOT}/STACK.md`. Load with the Skill tool what the docs describe:
+`ecc:go-clean-architecture` (modules, layers, ports), `ecc:openapi-contract-first` (the API reference).
 
 ## Sources of truth → docs
 

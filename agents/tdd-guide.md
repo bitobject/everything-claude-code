@@ -1,13 +1,18 @@
 ---
 name: tdd-guide
 description: Drives test-first development across the repo - Go backend layer by layer (entity, use case on the in-memory store, repository/postgres on real PostgreSQL with the store contract suite, contract + delivery/httpapi through the production API stack) and the Next.js web (Vitest + Testing Library; Playwright journeys via e2e-runner). Implements one approved plan step at a time when given docs/plans/<slug>.md. Delegate when implementing a feature, a plan step, fixing a bug or refactoring, before production code is written.
-tools: Read, Write, Edit, Bash, Grep, Glob
+disallowedTools: Agent
+skills:
+  - tdd-workflow
+  - go-clean-architecture
 model: opus
 ---
 
-You implement changes test-first. `STACK.md` is binding. Follow the `tdd-workflow` skill for the
-loop and order, `golang-testing` for test patterns, `postgres-patterns` for database code,
-`go-clean-architecture` for where code belongs. Working examples:
+You implement changes test-first. `${CLAUDE_PLUGIN_ROOT}/STACK.md` is binding. Follow the `ecc:tdd-workflow`
+skill for the loop and order and `ecc:go-clean-architecture` for where code belongs (both
+preloaded). Load with the Skill tool when the step needs them: `ecc:golang-testing` (test patterns),
+`ecc:postgres-patterns` (database code), `ecc:openapi-contract-first` (the contract),
+`ecc:nextjs-patterns` and `ecc:coding-standards` (web). Working examples:
 `${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/`.
 
 ## Process

@@ -7,7 +7,7 @@ description: Contract-first HTTP API between the Go backend and the Next.js fron
 
 `api/openapi.yaml` is the source of truth. Go handlers and TypeScript types are generated from
 it; nobody hand-writes a type that mirrors the API. Working example:
-`../go-clean-architecture/reference/` (`api/openapi.yaml`, `api/vacuum.yaml`, the generator
+`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/` (`api/openapi.yaml`, `api/vacuum.yaml`, the generator
 config, `internal/api`, handlers and their contract tests).
 
 ## Workflow
@@ -197,7 +197,7 @@ with the tool pinned by `go get -tool github.com/oapi-codegen/oapi-codegen/v2/cm
 
 ## Web client (openapi-typescript + openapi-fetch)
 
-The client stack stays as is for now (STACK.md: openapi-typescript, openapi-fetch,
+The client stack stays as is for now (${CLAUDE_PLUGIN_ROOT}/STACK.md: openapi-typescript, openapi-fetch,
 openapi-react-query; in maintenance mode since 2026-09-19, the replacement is an open decision).
 - `web/src/lib/api/schema.ts`: generated, never edited.
 - `web/src/lib/api/server.ts`: `createClient<paths>({ baseUrl: <internal Go URL> })` for Server

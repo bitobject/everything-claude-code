@@ -7,7 +7,7 @@ description: Secure-by-default patterns and checklists for the Go API and the Ne
 
 The `security-reviewer` agent applies this skill to a diff. When writing code, use the patterns
 below directly; they are cheaper than findings. Working code for several of them:
-`../go-clean-architecture/reference/backend/` (validator, problems, `ClientIP`, limits, masking).
+`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/` (validator, problems, `ClientIP`, limits, masking).
 
 ## Authorization lives in use cases
 
@@ -35,7 +35,7 @@ func (uc *GetLead) Handle(ctx context.Context, p auth.Principal, id uuid.UUID) (
 ## Login and sessions
 
 Users log in only through Russian services: **email, Yandex ID, VK ID, or a phone number**
-(`STACK.md`, "Login"). Decided (2026-11-13): email by a one-time code or link, no passwords;
+(`${CLAUDE_PLUGIN_ROOT}/STACK.md`, "Login"). Decided (2026-11-13): email by a one-time code or link, no passwords;
 clients, lawyers and staff all log in, each into their own cabinet (`/account`, `/cabinet`,
 `/admin`); accounts that share a verified email are merged automatically; sessions last 7 days
 idle and 30 days absolute. Email alone is accepted as a login method (the 149-FZ question is
@@ -183,7 +183,7 @@ serve lawyer A's leads to lawyer B.
 `Content-Security-Policy`: a nonce-based policy needs every page rendered per request (Next.js:
 "all pages must be dynamically rendered", incompatible with Partial Prerendering), so it can't
 cover the static SEO pages. Don't turn static pages dynamic for it: which policy the public
-pages and the cabinets get is an open decision (STACK.md).
+pages and the cabinets get is an open decision (${CLAUDE_PLUGIN_ROOT}/STACK.md).
 
 ## Availability
 

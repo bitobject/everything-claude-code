@@ -9,7 +9,7 @@ Use the **planner** agent to plan: $ARGUMENTS
    infrastructure), use the **architect** agent first. It writes its proposal into the project:
    an ADR in `docs/adr/` with `status: proposed`, and `docs/architecture/` or a module's
    `CLAUDE.md` where the design changes them. The plan links the ADR.
-2. The planner reads `STACK.md`, the `go-clean-architecture` skill, `docs/architecture/`, the
+2. The planner reads `${CLAUDE_PLUGIN_ROOT}/STACK.md`, the `go-clean-architecture` skill, `docs/architecture/`, the
    `CLAUDE.md` of the modules involved and the closest existing example in the codebase, then
    writes the plan to `docs/plans/<slug>.md` with `Status: draft`. A file rather than a chat
    message: you can read and edit it, a changed plan shows as a diff, it survives compaction and

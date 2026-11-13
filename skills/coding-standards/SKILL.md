@@ -6,7 +6,7 @@ description: TypeScript and React coding standards for web/ (Next.js 16, React 1
 # TypeScript and React standards (web/)
 
 **Go code is out of scope here: see the `golang-patterns` skill.** Next.js architecture (caching, Server Actions,
-API clients) is in `nextjs-patterns`; SEO in `seo`. Versions come from `STACK.md`.
+API clients) is in `nextjs-patterns`; SEO in `seo`. Versions come from `${CLAUDE_PLUGIN_ROOT}/STACK.md`.
 
 ## Principles
 
@@ -42,7 +42,7 @@ pnpm check            # all of the above except e2e, then pnpm build: the web's 
 }
 ```
 
-Dependencies are exact versions from `STACK.md` §4 (no `^`), including the helpers (Vite, jsdom, Testing Library,
+Dependencies are exact versions from `${CLAUDE_PLUGIN_ROOT}/STACK.md` §4 (no `^`), including the helpers (Vite, jsdom, Testing Library,
 `@tailwindcss/postcss`, `@axe-core/playwright`). Generators (`create-next-app`, `shadcn`) write ranges: pin them.
 
 ### ESLint: boundaries, typed rules, accessibility

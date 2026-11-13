@@ -5,9 +5,9 @@ description: PostgreSQL in the Go backend - roles (schema owner vs application),
 
 # PostgreSQL patterns
 
-Binding decisions are in `STACK.md`: PostgreSQL 18, pgx v5 (`pgxpool`), sqlc with
+Binding decisions are in `${CLAUDE_PLUGIN_ROOT}/STACK.md`: PostgreSQL 18, pgx v5 (`pgxpool`), sqlc with
 `sql_package: pgx/v5`, goose v3 SQL migrations embedded in the binary, River for jobs, one schema
-per module, stdlib `uuid`. Working code: `../go-clean-architecture/reference/backend/`. Tests for
+per module, stdlib `uuid`. Working code: `${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/`. Tests for
 this code: `golang-testing` skill. Reviews: `database-reviewer` agent.
 
 ## Where database code lives
@@ -27,7 +27,7 @@ Never pass `pgx.Tx`, `pgtype.*` or `sqlcgen` types across a port. Never put a tr
 
 ## Roles
 
-Two roles per database (`reference/backend/migrations/00001_privileges.sql`, README there):
+Two roles per database (`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/migrations/00001_privileges.sql`, README there):
 - **owner** (`app_owner`) owns the schemas and runs migrations: `MIGRATE_DATABASE_URL`,
   `api migrate`;
 - **application** (`app_runtime`) runs the API and the worker: `DATABASE_URL`; only `SELECT`,
@@ -91,7 +91,7 @@ func Open(ctx context.Context, dsn string, c Config) (*pgxpool.Pool, error) {
 ## sqlc
 
 `backend/sqlc.yaml`, one `sql` entry per module so each module's queries generate into its own
-package (`reference/backend/sqlc.yaml`):
+package (`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/sqlc.yaml`):
 
 ```yaml
 version: "2"
@@ -130,7 +130,7 @@ sql:
   edit `sqlcgen/`. Don't use `sqlc verify` or `sqlc push`: they send the schema and queries to
   sqlc's cloud.
 
-Query file conventions (`reference/.../queries/leads.sql`):
+Query file conventions (`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/internal/leads/repository/postgres/queries/leads.sql`):
 
 ```sql
 -- name: GetLeadForUpdate :one
@@ -308,12 +308,12 @@ func (w *Worker) Work(ctx context.Context, job *river.Job[LeadCreatedArgs]) erro
   `RunOnStart` when the interval is long: the elected leader keeps the schedule in memory only.
 - **Stopping**: `client.Start(context.WithoutCancel(ctx))` (cancelling Start's context stops
   hard), then on SIGTERM `client.Stop` with a grace period, `StopAndCancel` after it
-  (`reference/backend/cmd/worker/main.go`).
+  (`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/cmd/worker/main.go`).
 
 ## Idempotency-Key storage
 
 `createLead` takes an `Idempotency-Key` (`openapi-contract-first` skill); the use case claims the
-key in the transaction that creates the lead (`reference/.../queries/idempotency_keys.sql`):
+key in the transaction that creates the lead (`${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/internal/leads/repository/postgres/queries/idempotency_keys.sql`):
 
 ```sql
 -- name: ClaimIdempotencyKey :execrows

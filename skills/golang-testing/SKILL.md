@@ -5,8 +5,8 @@ description: How to test the Go backend layer by layer - entity (table-driven, c
 
 # Go testing
 
-Binding decisions live in `STACK.md` (testing pyramid, versions). This skill shows how to apply
-them; every example is from `../go-clean-architecture/reference/backend/`. The TDD loop that
+Binding decisions live in `${CLAUDE_PLUGIN_ROOT}/STACK.md` (testing pyramid, versions). This skill shows how to apply
+them; every example is from `${CLAUDE_PLUGIN_ROOT}/skills/go-clean-architecture/reference/backend/`. The TDD loop that
 drives these tests is in the `tdd-workflow` skill.
 
 ## Rules

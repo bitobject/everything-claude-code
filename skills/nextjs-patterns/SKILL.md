@@ -11,7 +11,7 @@ installed version: `web/node_modules/next/dist/docs/` (`01-app/03-api-reference`
 `@AGENTS.md` (template: `../../examples/web-CLAUDE.md`, relative to this skill's directory). Below, `docs/` means
 `node_modules/next/dist/docs/01-app/`.
 
-Versions: `STACK.md`. Lint config, TypeScript and React style: `coding-standards`. SEO: `seo`. Tests: `tdd-workflow`.
+Versions: `${CLAUDE_PLUGIN_ROOT}/STACK.md`. Lint config, TypeScript and React style: `coding-standards`. SEO: `seo`. Tests: `tdd-workflow`.
 The files shown below (in full, or as marked excerpts) were compiled, linted (`strictTypeChecked`, boundaries,
 jsx-a11y), tested and built with the pinned versions on 2026-11-13.
 
@@ -749,7 +749,7 @@ export function register() {
 
 - `@vercel/otel` is what the bundled docs recommend (`docs/02-guides/open-telemetry.md`); their manual `NodeSDK`
   setup is equivalent but imports `@opentelemetry/sdk-trace-node`, which OpenTelemetry JS 3.0 deprecated. `@vercel/otel`
-  2.x needs the OpenTelemetry 2.x packages (`@opentelemetry/api` below 1.10): pin that line (`STACK.md` §4).
+  2.x needs the OpenTelemetry 2.x packages (`@opentelemetry/api` below 1.10): pin that line (`${CLAUDE_PLUGIN_ROOT}/STACK.md` §4).
 - Export is configured only by the standard variables: `OTEL_EXPORTER_OTLP_ENDPOINT` (or `…_TRACES_ENDPOINT`),
   `OTEL_EXPORTER_OTLP_PROTOCOL` (`http/protobuf` by default, `http/json`), `OTEL_EXPORTER_OTLP_HEADERS`.
 - `propagateContextUrls` is required: by default `@vercel/otel` propagates context only to Vercel deployment URLs.
