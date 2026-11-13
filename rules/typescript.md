@@ -21,17 +21,18 @@ version in `web/node_modules/next/dist/docs/`, not memory. Done means `pnpm chec
 - Error bodies: parse with `asProblem()`, branch on `code`; a non-2xx body may not be a problem document.
 
 ## Next.js 16, not 14/15
-- `src/proxy.ts` with `export function proxy`; `middleware.ts` is the old name.
+- Lint rejects the old APIs and names the fix (the Next.js 16 block of `eslint.config.mjs`, config in
+  `coding-standards`): `middleware.ts`, `unstable_cache`, `export const revalidate|dynamic|dynamicParams|fetchCache`,
+  `fetch(…, { next: { revalidate } })`, `updateTag` outside `features/*/actions.ts`, `cookies()`/`headers()` inside
+  `'use cache'`, `return []` from `generateStaticParams`, `next/image` `priority`, `as Route` outside `@/lib/routes`.
+- `src/proxy.ts` exports `proxy`. Caching is Cache Components: `'use cache'` + `cacheLife()` + `cacheTag()`; a cached
+  function gets request values as arguments and returns plain `data`, not the openapi-fetch result.
 - `params`, `searchParams`, `cookies()`, `headers()` are async: `await` them. Type with the global `PageProps<'/route'>`.
-- Caching is Cache Components: `'use cache'` + `cacheLife()` + `cacheTag()`. Never `unstable_cache`,
-  `export const revalidate|dynamic|dynamicParams|fetchCache`, or `fetch(…, { next: { revalidate } })`.
 - `revalidateTag(tag, 'max')` takes two arguments; `updateTag(tag)` works only in Server Actions.
-- No `cookies()`/`headers()` inside `'use cache'`; cached functions return plain `data`, not the openapi-fetch result.
-- `generateStaticParams` returns at least one item; unknown params call `notFound()`.
+- `generateStaticParams` returns at least one real param; unknown params call `notFound()`.
 - `next lint` is gone: `pnpm exec eslint .`. `error.tsx` receives `{ error: unknown; retry }`.
-- `next/image` `priority` is deprecated: the single LCP image gets `loading="eager"` and `fetchPriority="high"`
-  (`fetchPriority` alone stays lazy).
-- `typedRoutes` is on: build hrefs in `@/lib/routes`, the only place that casts to `Route`.
+- The single LCP image gets `loading="eager"` and `fetchPriority="high"`. `typedRoutes` is on: hrefs come from
+  `@/lib/routes`.
 
 ## Forms and mutations
 - Public forms are Server Actions (work without JS); cabinet interactions use `$api.useMutation` + invalidation.

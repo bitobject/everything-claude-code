@@ -89,6 +89,10 @@ claude plugin install ecc@ecc-local
 
 - Тесты хуков: `bash tests/hooks.test.sh` и `bash tests/context-hint.test.sh`.
 - Агенты, скиллы, команды (frontmatter, ссылки на STACK.md и скиллы): `bash tests/agents.test.sh`.
+- Правила ESLint для Next.js 16 из `coding-standards`: `bash tests/eslint-next16.test.sh`. Тест ставит во
+  временное приложение версии из STACK.md §4 и проверяет фикстуры из `tests/fixtures/eslint-next16`. Вызовов
+  модели нет. Нужны Node и pnpm, а при первом запуске ещё и доступ к npm. Запускайте его после изменений
+  конфига ESLint в скилле или версий в STACK.md.
 - Живой тест доставки знаний: `bash tests/context-delivery.sh`. Он делает настоящие вызовы модели
   (haiku, около $0,02 за прогон; лимит `BUDGET`, по умолчанию $1, действует на каждый из трёх
   вызовов `claude -p`). Запускайте его после обновления

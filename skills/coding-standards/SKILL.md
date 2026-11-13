@@ -57,6 +57,82 @@ import boundaries from 'eslint-plugin-boundaries'
 import jsxA11y from 'eslint-plugin-jsx-a11y-x'
 import tseslint from 'typescript-eslint'
 
+// Next.js 16 and Cache Components: APIs that are gone or replaced; each message names the fix. A later
+// config object replaces a rule's options instead of merging them, so each exception repeats the lists.
+const nextImports = [
+  {
+    name: 'next/cache',
+    importNames: ['unstable_cache'],
+    message: "Cache Components replace it: a data function with 'use cache', cacheLife() and cacheTag().",
+  },
+]
+const updateTagImport = {
+  name: 'next/cache',
+  importNames: ['updateTag'],
+  message: "updateTag works only in a Server Action (src/features/*/actions.ts); elsewhere use revalidateTag(tag, 'max').",
+}
+const useCache = 'ExpressionStatement[directive=/^use cache(: remote)?$/]' // 'use cache: private' may read the request
+const requestApi = 'CallExpression[callee.name=/^(cookies|headers)$/]'
+const nextSyntax = [
+  {
+    selector: "Property[key.name='next'] > ObjectExpression > Property[key.name='revalidate']",
+    message: "fetch's next.revalidate is the old caching model: cache in a 'use cache' function with cacheLife().",
+  },
+  {
+    // esquery 1.7 matches only a one-step `:has(> …)`, so the directive is looked up from the function's body
+    selector: `:function > BlockStatement:has(> ${useCache}) ${requestApi}, Program:has(> ${useCache}) ${requestApi}`,
+    message: "cookies() and headers() fail inside 'use cache': read them outside and pass the value in as an argument.",
+  },
+  {
+    selector:
+      "CallExpression[callee.property.name='toString'][callee.object.argument.callee.name='cookies'], CallExpression[callee.property.name='toString'][callee.object.callee.name='cookies']",
+    message: 'Forward only the session cookie, verbatim: apiFor(await sessionHeaders()), not (await cookies()).toString().',
+  },
+  {
+    selector: "JSXOpeningElement[name.name='Image'] > JSXAttribute[name.name='priority']",
+    message:
+      'next/image priority is deprecated. The single LCP image gets loading="eager" and fetchPriority="high"; preload only when it must be discovered from <head>.',
+  },
+  {
+    selector:
+      "JSXOpeningElement[name.name='Image']:has(> JSXAttribute[name.name='fetchPriority'][value.value='high']):not(:has(> JSXAttribute[name.name=/^(loading|preload|priority)$/]))",
+    message: 'fetchPriority="high" alone still renders loading="lazy": add loading="eager".',
+  },
+  {
+    selector:
+      "JSXOpeningElement[name.name='Image']:has(> JSXAttribute[name.name='preload']):has(> JSXAttribute[name.name=/^(loading|fetchPriority)$/])",
+    message: 'preload is not combined with loading or fetchPriority: drop preload, keep loading="eager" + fetchPriority="high".',
+  },
+]
+// Page, layout and route files only: elsewhere these names are ordinary exports.
+const routeSyntax = [
+  {
+    selector: 'ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[id.name=/^(dynamic|dynamicParams|revalidate|fetchCache)$/]',
+    message:
+      "Cache Components removed this route segment config: delete it; cache data with 'use cache' + cacheLife(), and call notFound() for an unknown param instead of dynamicParams = false.",
+  },
+  {
+    selector: [
+      "FunctionDeclaration[id.name='generateStaticParams'] > BlockStatement > ReturnStatement[argument.type='ArrayExpression'][argument.elements.length=0]",
+      "VariableDeclarator[id.name='generateStaticParams'] > :function > BlockStatement > ReturnStatement[argument.type='ArrayExpression'][argument.elements.length=0]",
+      "VariableDeclarator[id.name='generateStaticParams'] > ArrowFunctionExpression[body.type='ArrayExpression'][body.elements.length=0]",
+    ].join(', '),
+    message: 'generateStaticParams must return at least one param with Cache Components; params it does not list still render on request.',
+  },
+]
+const routeCast = {
+  selector: ":matches(TSAsExpression, TSTypeAssertion)[typeAnnotation.typeName.name='Route']",
+  message: 'Build the href with a helper from @/lib/routes, the only file that casts to Route (typedRoutes).',
+}
+const proxyExport = {
+  selector: "ExportNamedDeclaration > FunctionDeclaration[id.name='middleware']",
+  message: 'Next 16 calls the function named proxy: export function proxy (middleware is the old name).',
+}
+const middlewareFile = {
+  selector: 'Program',
+  message: 'Next 16 renamed middleware to proxy: move this file to src/proxy.ts and export function proxy.',
+}
+
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -166,6 +242,23 @@ export default defineConfig([
     },
   },
 
+  // Next.js 16 and Cache Components: the lists above. Exceptions come after the shared object.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', { paths: [...nextImports, updateTagImport] }],
+      'no-restricted-syntax': ['error', ...nextSyntax, routeCast],
+    },
+  },
+  {
+    files: ['src/app/**/{page,layout,route}.{ts,tsx}'],
+    rules: { 'no-restricted-syntax': ['error', ...nextSyntax, routeCast, ...routeSyntax] },
+  },
+  { files: ['src/features/*/actions.ts'], rules: { 'no-restricted-imports': ['error', { paths: nextImports }] } },
+  { files: ['src/lib/routes.ts'], rules: { 'no-restricted-syntax': ['error', ...nextSyntax] } },
+  { files: ['src/proxy.ts'], rules: { 'no-restricted-syntax': ['error', ...nextSyntax, routeCast, proxyExport] } },
+  { files: ['src/middleware.{ts,js}'], rules: { 'no-restricted-syntax': ['error', middlewareFile] } },
+
   // Playwright fixtures receive a function named `use`; it is not a React hook.
   { files: ['e2e/**/*.ts'], rules: { 'react-hooks/rules-of-hooks': 'off' } },
 
@@ -197,6 +290,14 @@ export default defineConfig([
   `data.ts`/`actions.ts`, it cannot import `server.ts`. It resolves `@/` through the TypeScript resolver
   `eslint-config-next` registers. Chosen over `import/no-restricted-paths`: that rule needs one zone per feature to forbid feature-to-feature imports, and
   `eslint-plugin-import` 2.32 does not declare ESLint 10 support.
+- **Next.js 16 block** (core `no-restricted-imports` and `no-restricted-syntax`, each message naming the fix): what
+  Next 16 or Cache Components removed (`middleware.ts`, `unstable_cache`, route segment config, `next.revalidate` in
+  `fetch`), `updateTag` outside `features/*/actions.ts`, `cookies()`/`headers()` directly inside `'use cache'`, a
+  literal `[]` from `generateStaticParams`, `next/image` `priority` and its LCP pairings, and `as Route` outside
+  `lib/routes.ts`. A later config object replaces a rule's options, so each exception (route files, `actions.ts`,
+  `routes.ts`, `proxy.ts`) repeats the shared lists. Not covered: what `tsc` already rejects (one-argument
+  `revalidateTag`, synchronous `params` or `cookies()`), a helper that reads the request inside a cache, and a list
+  that is empty only at runtime. `no-deprecated` does not check JSX props, so without this block `priority` passes.
 - `eslint-config-next` also enables `react-hooks` 7's React Compiler rules (`purity`, `refs`, `set-state-in-effect`,
   `immutability`) as errors. Never disable `rules-of-hooks` or `exhaustive-deps` inline without a written reason;
   `e2e/` turns `rules-of-hooks` off only because Playwright fixtures receive a function named `use`.

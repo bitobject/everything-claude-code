@@ -27,8 +27,9 @@ problems), `ecc:seo` (indexable pages).
 2. **Checks** (from `web/`): `pnpm typecheck`, `pnpm exec eslint <changed files>`, `pnpm exec prettier --check
    <changed files>`, `pnpm knip`. Report failures first as CRITICAL; continue reading anyway. ESLint already enforces
    the boundaries, `strictTypeChecked` (any, `!`, `@ts-ignore`, promises, exhaustive switches, deprecated APIs),
-   jsx-a11y and `no-console`; don't repeat those by hand, and treat any weakening of `eslint.config.mjs` or
-   `knip.json` as CRITICAL.
+   jsx-a11y, `no-console` and the Next.js 16 block (old APIs, route segment config, `cookies()`/`headers()` directly
+   inside `'use cache'`, `next/image` `priority`, `as Route` outside `lib/routes.ts`); don't repeat those by hand,
+   and treat any weakening of `eslint.config.mjs` or `knip.json` as CRITICAL.
 3. **Context.** For each changed file read the surrounding code that decides its behaviour: parent layouts of a
    changed route (an `ensureStatic` level or a `cookies()` call there affects every child), the data functions it
    calls, whether it sits under `'use client'`, and the relevant part of `api/openapi.yaml`.
@@ -62,15 +63,14 @@ problems), `ecc:seo` (indexable pages).
 
 ## HIGH: Next.js 16 correctness
 
-- `middleware.ts` / `export function middleware` (Next 16 uses `proxy.ts` / `export function proxy`); proxy without
-  a `matcher`; proxy treated as the auth boundary.
+- Proxy without a `matcher`; proxy treated as the auth boundary.
 - Synchronous `params`, `searchParams`, `cookies()`, `headers()`; missing `await`.
-- `cookies()`, `headers()` or `searchParams` read inside `'use cache'`, directly or through a helper.
+- `searchParams` read inside `'use cache'`, or `cookies()`/`headers()` reached through a helper (lint sees only
+  direct calls).
 - `'use cache'` without `cacheLife`; cached functions returning non-serializable values (`Response`, the whole
   openapi-fetch result, class instances, `URL`); `new Date()`, `Date.now()`, `Math.random()` on a prerendered path.
-- `revalidateTag(tag)` with one argument (deprecated); `updateTag` outside a Server Action; `unstable_cache`,
-  `export const dynamic | revalidate | dynamicParams | fetchCache` (fail with `cacheComponents`).
-- `generateStaticParams` returning `[]`, or missing on a route with `ensureStatic = 'navigation'`.
+- `generateStaticParams` that can return an empty list (lint sees only a literal `[]`), or missing on a route with
+  `ensureStatic = 'navigation'`.
 - `useSearchParams()` outside `<Suspense>` (CSR bailout of the whole subtree).
 - `'use client'` on a page or layout, or on a module that drags large dependencies into the client graph.
 - Hand-written types mirroring API payloads; API path strings cast to make them compile; zod schemas duplicating
@@ -136,8 +136,8 @@ For a full SEO audit, recommend running the `seo-specialist` agent (you can't st
 
 ## MEDIUM: performance
 
-- LCP image without `loading="eager"` + `fetchPriority="high"` (`fetchPriority` alone still renders
-  `loading="lazy"`), or `preload` combined with `loading`/`fetchPriority`; missing `sizes` on `fill` images.
+- LCP image without `loading="eager"` + `fetchPriority="high"` (lint cannot tell which image is the LCP); missing
+  `sizes` on `fill` images.
 - Raw `<script src>` or third-party scripts with `beforeInteractive`; analytics not deferred.
 - Fonts not through `next/font`, or without the `cyrillic` subset (shadcn's init writes `latin` only).
 - Heavy client libraries on SEO routes; widgets that should be `next/dynamic` from a Client Component; providers in

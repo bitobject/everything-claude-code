@@ -778,6 +778,9 @@ export function register() {
 
 ## Anti-patterns
 
+ESLint rejects the rows it can see in the code (the Next.js 16 block of the config in `coding-standards`), and its
+message names the fix.
+
 | Don't | Do |
 |---|---|
 | `middleware.ts` / `export function middleware` | `src/proxy.ts` / `export function proxy` |
